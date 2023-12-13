@@ -1,0 +1,127 @@
+#####################################################################
+##   ,------.                    ,--.                ,--.          ##
+##   |  .--. ' ,---.  ,--,--.    |  |    ,---. ,---. `--' ,---.    ##
+##   |  '--'.'| .-. |' ,-.  |    |  |   | .-. | .-. |,--.| .--'    ##
+##   |  |\  \ ' '-' '\ '-'  |    |  '--.' '-' ' '-' ||  |\ `--.    ##
+##   `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---'    ##
+##                                             `---'               ##
+##   Modelsim/Questasim Makefile                                   ##
+##                                                                 ##
+#####################################################################
+##                                                                 ##
+##             Copyright (C) 2014-2017 ROA Logic BV                ##
+##             www.roalogic.com                                    ##
+##                                                                 ##
+##   This source file may be used and distributed without          ##
+##   restriction provided that this copyright statement is not     ##
+##   removed from the file and that any derivative work contains   ##
+##   the original copyright notice and the associated disclaimer.  ##
+##                                                                 ##
+##      THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY        ##
+##   EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED     ##
+##   TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS     ##
+##   FOR A PARTICULAR PURPOSE. IN NO EVENT SHALL THE AUTHOR OR     ##
+##   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,  ##
+##   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT  ##
+##   NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;  ##
+##   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)      ##
+##   HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN     ##
+##   CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR  ##
+##   OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS          ##
+##   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.  ##
+##                                                                 ##
+#####################################################################
+
+#
+# ChangeLog
+# 20171101: Added 'mfcu' option for Multi-File-Compilation
+#
+
+
+all: sim
+
+#####################################################################
+# Make Targets
+#####################################################################
+SIM_OPTS=-c +notimingchecks
+
+.PHONY: sim simw clean
+
+LOG = $(TOP).log
+
+sim: vlog
+	echo "--- Running sim"
+	vsim $(SIM_OPTS)							\
+	  -l $(LOG) $(TOP)							\
+	  -do "run -all; quit"							\
+	  $(foreach p, $(PARAMS),-g`echo $p | sed -r 's/(\w+)=([^0-9].*)/\1="\2"/'`)
+
+
+simw: vlog
+	echo "--- Running sim with waveform dump"
+	vsim $(SIM_OPTS) 							\
+	  -l $(LOG) $(TOP)							\
+	  -voptargs=+acc +access +r -wlf $(TOP).wlf				\
+	  -do "log -r /$(TOP)/*;						\
+	       log /$(TOP)/HSEL; 						\
+	       log /$(TOP)/HTRANS;						\
+	       log /$(TOP)/HSIZE;						\
+	       log /$(TOP)/HBURST;						\
+	       log /$(TOP)/HPROT;						\
+	       log /$(TOP)/HWRITE;						\
+	       log /$(TOP)/HMASTLOCK;						\
+	       log /$(TOP)/HADDR;						\
+	       log /$(TOP)/HWDATA;						\
+	       log /$(TOP)/HRDATA;						\
+	       log /$(TOP)/HREADYOUT;						\
+	       log /$(TOP)/HREADY;						\
+	       log /$(TOP)/HRESP;						\
+	       log /$(TOP)/dut/cmd_scheduler/tRP_cnt;				\
+	       log /$(TOP)/dut/cmd_scheduler/tRCD_cnt;				\
+	       log /$(TOP)/dut/cmd_scheduler/bank_row;				\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_cnt;				\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_cnt_ld_val;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_rw_val;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_cnt_ld;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_cnt_done;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_rd_done;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_wr_done;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_col;				\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_dq_wbuf;			\
+	       log /$(TOP)/dut/cmd_scheduler/xfer_dm_wbuf;			\
+	       log /$(TOP)/dut/cmd_scheduler/rdcmd_queue;			\
+	       log /$(TOP)/dut/phy/dqi_synchroniser/memory;			\
+	       run -all; quit"							\
+	$(foreach p, $(PARAMS),-g`echo $p | sed -r 's/(\w+)=([^0-9].*)/\1="\2"/'`)
+	
+clean:
+	@rm -rf work *.log *.wlf
+
+
+
+#####################################################################
+## VHDL
+#####################################################################
+
+
+#####################################################################
+## Verilog
+#####################################################################
+.PHONY: vlog
+
+vlog: work $(VLOG) $(VLOG_LIBS)
+	echo "--- Running vlog"
+	vlog -work work $(VLOG)					\
+	-sv -mfcu						\
+	$(foreach d,$(DEFINES),+define+$d)			\
+	$(foreach d,$(INCDIRS),+incdir+$d)			\
+	$(foreach l,$(wildcard $(LIBDIRS)),-y $l) 		\
+	+libext$(foreach e,$(LIBEXT),+$e)			\
+	$(foreach l,$(wildcard $(TECHLIBS)/*.v),-v $l)
+
+
+#####################################################################
+## libraries
+#####################################################################
+work:
+	vlib $@
