@@ -86,7 +86,7 @@ module sdram_address_mapping
   //
   // Variables
   //
-  logic [ADDR_SIZE -1:0] address_dsize,
+  logic [ADDR_SIZE -1:0] address_dqsize,
                          address_columns,
                          address_rows;
 
@@ -96,20 +96,20 @@ module sdram_address_mapping
   //
 
 
-  //1. handle dsize
-  assign address_dsize = address_i >> csr_i.ctrl.dsize;
+  //1. handle dqsize
+  assign address_dqsize = address_i >> csr_i.ctrl.dqsize;
 
-  //2. extract column; LSBs of adr_dsize
+  //2. extract column; LSBs of adr_dqsize
   always @(posedge clk_i)
-    column_o <= address_dsize[MAX_CSIZE-1:0];
+    column_o <= address_dqsize[MAX_CSIZE-1:0];
 
   //3. extract row
   always_comb
     case (csr_i.ctrl.cols)
-      2'b00: address_columns = address_dsize >>  8;
-      2'b01: address_columns = address_dsize >>  9;
-      2'b10: address_columns = address_dsize >> 10;
-      2'b11: address_columns = address_dsize >> 11;
+      2'b00: address_columns = address_dqsize >>  8;
+      2'b01: address_columns = address_dqsize >>  9;
+      2'b10: address_columns = address_dqsize >> 10;
+      2'b11: address_columns = address_dqsize >> 11;
     endcase
 
   always @(posedge clk_i)

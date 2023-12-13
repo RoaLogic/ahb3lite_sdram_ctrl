@@ -211,10 +211,10 @@ import sdram_ctrl_pkg::*;
           begin
               csr.ctrl[23:16] <= PWDATA[23:16];
               case (SDRAM_DQ_SIZE)
-                128     : csr.ctrl.dsize <= PWDATA[17:16];
-                 64     : csr.ctrl.dsize <= {PWDATA[17], PWDATA[16] & ~PWDATA[17]};
-                 32     : csr.ctrl.dsize <= {1'b0, PWDATA[16]};
-                 default: csr.ctrl.dsize <= 2'b00;
+                128     : csr.ctrl.dqsize <= PWDATA[17:16];
+                 64     : csr.ctrl.dqsize <= {PWDATA[17], PWDATA[16] & ~PWDATA[17]};
+                 32     : csr.ctrl.dqsize <= {1'b0, PWDATA[16]};
+                 default: csr.ctrl.dqsize <= 2'b00;
               endcase
           end
           if (PSTRB[1]) csr.ctrl[15: 8] <= PWDATA[15: 8];

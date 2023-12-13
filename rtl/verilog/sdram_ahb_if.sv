@@ -76,58 +76,59 @@ module sdram_ahb_if
   import ahb3lite_pkg::*;
 `endif
 #(
-  parameter int HADDR_SIZE       = 32,
-  parameter int HDATA_SIZE       = 32,
-  parameter int WRITEBUFFER_SIZE = 8,
+  parameter int HADDR_SIZE        = 32,
+  parameter int HDATA_SIZE        = 32,
+  parameter int WRITEBUFFER_SIZE  = 8,
 
-  parameter int BA_SIZE          = 2,
-  parameter int MAX_RSIZE        = 13,
-  parameter int MAX_CSIZE        = 11,
+  parameter int SDRAM_DQ_SIZE     = 16,
+  parameter int SDRAM_BA_SIZE     = 2,
+  parameter int MAX_RSIZE         = 13,
+  parameter int MAX_CSIZE         = 11,
 
-  parameter int DSIZE            = WRITEBUFFER_SIZE * HDATA_SIZE
+  parameter int WRITEBUFFER_DSIZE = WRITEBUFFER_SIZE * HDATA_SIZE
 )
 (
-  input csr_t                     csr_i,
+  input csr_t                            csr_i,
 
   //AHB Port
-  input  logic                    HRESETn,
-                                  HCLK,
-                                  HSEL,
-  input  logic [HTRANS_SIZE -1:0] HTRANS,
-  input  logic [HSIZE_SIZE  -1:0] HSIZE,
-  input  logic [HBURST_SIZE -1:0] HBURST,
-  input  logic [HPROT_SIZE  -1:0] HPROT,
-  input  logic                    HWRITE,
-  input  logic                    HMASTLOCK,
-  input  logic [HADDR_SIZE  -1:0] HADDR,
-  input  logic [HDATA_SIZE  -1:0] HWDATA,
-  output logic [HDATA_SIZE  -1:0] HRDATA,
-  output logic                    HREADYOUT,
-  input  logic                    HREADY,
-  output logic                    HRESP,
+  input  logic                           HRESETn,
+                                         HCLK,
+                                         HSEL,
+  input  logic [HTRANS_SIZE        -1:0] HTRANS,
+  input  logic [HSIZE_SIZE         -1:0] HSIZE,
+  input  logic [HBURST_SIZE        -1:0] HBURST,
+  input  logic [HPROT_SIZE         -1:0] HPROT,
+  input  logic                           HWRITE,
+  input  logic                           HMASTLOCK,
+  input  logic [HADDR_SIZE         -1:0] HADDR,
+  input  logic [HDATA_SIZE         -1:0] HWDATA,
+  output logic [HDATA_SIZE         -1:0] HRDATA,
+  output logic                           HREADYOUT,
+  input  logic                           HREADY,
+  output logic                           HRESP,
 
   //To SDRAM
-  output logic                    wbr_o,
+  output logic                           wbr_o,
 
-  output logic                    rdreq_o,
-  input  logic                    rdrdy_i,
-  output logic [HADDR_SIZE  -1:0] rdadr_o,
-  output logic [BA_SIZE     -1:0] rdba_o,
-  output logic [MAX_RSIZE   -1:0] rdrow_o,
-  output logic [MAX_CSIZE   -1:0] rdcol_o,
-  output logic [             2:0] rdsize_o,
-  input  logic [HDATA_SIZE  -1:0] rdq_i,
-  input  logic                    rdqvalid_i,
+  output logic                           rdreq_o,
+  input  logic                           rdrdy_i,
+  output logic [HADDR_SIZE         -1:0] rdadr_o,
+  output logic [SDRAM_BA_SIZE      -1:0] rdba_o,
+  output logic [MAX_RSIZE          -1:0] rdrow_o,
+  output logic [MAX_CSIZE          -1:0] rdcol_o,
+  output logic [                    2:0] rdsize_o,
+  input  logic [SDRAM_DQ_SIZE      -1:0] rdq_i,
+  input  logic                           rdqvalid_i,
 
-  output logic                    wrreq_o,
-  input  logic                    wrrdy_i,
-  output logic [HADDR_SIZE  -1:0] wradr_o,
-  output logic [BA_SIZE     -1:0] wrba_o,
-  output logic [MAX_RSIZE   -1:0] wrrow_o,
-  output logic [MAX_CSIZE   -1:0] wrcol_o,
-  output logic [             2:0] wrsize_o,
-  output logic [DSIZE/8     -1:0] wrbe_o,
-  output logic [DSIZE       -1:0] wrd_o
+  output logic                           wrreq_o,
+  input  logic                           wrrdy_i,
+  output logic [HADDR_SIZE         -1:0] wradr_o,
+  output logic [SDRAM_BA_SIZE      -1:0] wrba_o,
+  output logic [MAX_RSIZE          -1:0] wrrow_o,
+  output logic [MAX_CSIZE          -1:0] wrcol_o,
+  output logic [                    2:0] wrsize_o,
+  output logic [WRITEBUFFER_DSIZE/8-1:0] wrbe_o,
+  output logic [WRITEBUFFER_DSIZE  -1:0] wrd_o
 );
 
 `ifdef ALTERA_RESERVED_QIS
@@ -140,10 +141,11 @@ module sdram_ahb_if
   // Constants
   //
   localparam HDATA_BYTES     = HDATA_SIZE/8;
-  localparam BUFFER_BYTES    = DSIZE/8;
+  localparam BUFFER_BYTES    = WRITEBUFFER_DSIZE/8;
   localparam BUFFER_ADR_SIZE = $clog2(BUFFER_BYTES);
   localparam BUFFER_TAG_SIZE = HADDR_SIZE - BUFFER_ADR_SIZE;
 
+  //localparam RDBUFFER_DSIZE  = 
 
   //////////////////////////////////////////////////////////////////
   //
@@ -173,6 +175,7 @@ module sdram_ahb_if
   endfunction : address_offset
 
   
+  //Generate byte-enables
   function automatic logic [HDATA_BYTES-1:0] gen_be;
     input [HSIZE_SIZE-1:0] hsize;
     input [HADDR_SIZE-1:0] haddr;
@@ -200,33 +203,92 @@ module sdram_ahb_if
   endfunction : gen_be
 
 
+  //How many transactions in burst
+  function automatic logic [3:0] hburst2cnt;
+    input [HBURST_SIZE-1:0] hburst;
+
+    case (hburst)
+      HBURST_SINGLE: hburst2cnt =  0;
+      HBURST_INCR  : hburst2cnt = 15;
+      HBURST_WRAP4 : hburst2cnt =  3;
+      HBURST_INCR4 : hburst2cnt =  3;
+      HBURST_WRAP8 : hburst2cnt =  7;
+      HBURST_INCR8 : hburst2cnt =  7;
+      HBURST_WRAP16: hburst2cnt = 15;
+      HBURST_INCR16: hburst2cnt = 15;
+    endcase
+  endfunction : hburst2cnt
+
+  //Calculate how many SDRAM transactions required for the AHB read
+  function automatic sdram_burstsize_4_ahb_read;
+    /*The number of SDRAM transactions dependends on the number of
+     *bytes to transfer, which depends on HSIZE and HBURST
+     *It also depends on csr.ctrl.burst_size
+     */
+
+     input [HBURST_SIZE-1:0] hburst;
+     input [HSIZE_SIZE -1:0] hsize;
+     input [            1:0] dqsize;
+
+  endfunction : sdram_burstsize_4_ahb_read
+
+
+/*
+  //calculate next burst address
+  function automatic [ADDR_SIZE-1:0] nxt_addr;
+    input [ADDR_SIZE  -1:0] addr;   //current address
+    input [HBURST_SIZE-1:0] hburst; //AHB HBURST
+    input [HSIZE_SIZE -1:0] hsize;  //AHB HSIZE
+
+    logic [ADDR_SIZE-1:0] mask;
+
+
+    //next linear address
+    nxt_addr = addr + (1 << hsize);
+
+    //align to boundary
+    nxt_addr = nxt_addr & ({ADDR_SIZE{1'b1}} << hsize);
+
+    //wrap?
+    case (hburst)
+      HBURST_WRAP4 : mask = {{ADDR_SIZE-2{1'b1}}, 2'h0} << hsize;
+      HBURST_WRAP8 : mask = {{ADDR_SIZE-3{1'b1}}, 3'h0} << hsize;
+      HBURST_WRAP16: mask = {{ADDR_SIZE-4{1'b1}}, 4'h0} << hsize;
+      default      : mask = {ADDR_SIZE{1'b0}};
+    endcase
+
+    //mix linear/wrap address
+    nxt_addr = (addr & mask) | (nxt_addr & ~mask);
+  endfunction: nxt_addr
+*/
+
   //////////////////////////////////////////////////////////////////
   //
   // Variables
   //
 
   //AHB domain
-  logic                       ahb_read,
-                              ahb_write;
+  logic                         ahb_read,
+                                ahb_write;
 
-  logic                       write,
-                              read;
-  logic [HDATA_BYTES    -1:0] be;
-  logic [BUFFER_TAG_SIZE-1:0] tag,
-                              write_tag;
-  logic [BUFFER_ADR_SIZE-1:0] idx;
+  logic                         write,
+                                read;
+  logic [HDATA_BYTES      -1:0] be;
+  logic [BUFFER_TAG_SIZE  -1:0] tag,
+                                write_tag;
+  logic [BUFFER_ADR_SIZE  -1:0] idx;
 
-  logic                       writebuffer_flush;
-  logic [               15:0] writebuffer_timer;
-  logic                       writebuffer_timer_expired;
-  logic [DSIZE          -1:0] writebuffer      [2];
-  logic [BUFFER_BYTES   -1:0] writebuffer_be   [2];
-  logic [BUFFER_TAG_SIZE-1:0] writebuffer_tag  [2];
-  logic                       writebuffer_dirty[2];
+  logic                         writebuffer_flush;
+  logic [                 15:0] writebuffer_timer;
+  logic                         writebuffer_timer_expired;
+  logic [WRITEBUFFER_DSIZE-1:0] writebuffer      [2];
+  logic [BUFFER_BYTES     -1:0] writebuffer_be   [2];
+  logic [BUFFER_TAG_SIZE  -1:0] writebuffer_tag  [2];
+  logic                         writebuffer_dirty[2];
 
-  logic                       pingpong,
-                              pingpong_toggle,
-                              nxt_pingpong;
+  logic                         pingpong,
+                                pingpong_toggle,
+                                nxt_pingpong;
 
   //FSM encoding
   enum {rd_idle, rd_read} rd_nxt_state, rd_state;
@@ -237,17 +299,17 @@ module sdram_ahb_if
 
 
   //To SDRAM
-  logic                    wbr;      //write-before-read
+  logic                           wbr;      //write-before-read
 
-  logic                    rdreq;
-  logic [HADDR_SIZE  -1:0] rdadr;
-  logic [             2:0] rdsize;
+  logic                           rdreq;
+  logic [HADDR_SIZE         -1:0] rdadr;
+  logic [                    2:0] rdsize;
 
-  logic                    wrreq;
-  logic [HADDR_SIZE  -1:0] wradr;
-  logic [             2:0] wrsize;
-  logic [DSIZE/8     -1:0] wrbe;
-  logic [DSIZE       -1:0] wrd;
+  logic                           wrreq;
+  logic [HADDR_SIZE         -1:0] wradr;
+  logic [                    2:0] wrsize;
+  logic [WRITEBUFFER_DSIZE/8-1:0] wrbe;
+  logic [WRITEBUFFER_DSIZE  -1:0] wrd;
 
 
   //////////////////////////////////////////////////////////////////
@@ -516,23 +578,23 @@ module sdram_ahb_if
 
 
   sdram_address_mapping #(
-    .ADDR_SIZE ( HADDR_SIZE ),
-    .MAX_CSIZE ( MAX_CSIZE  ),
-    .MAX_RSIZE ( MAX_RSIZE  ),
-    .BA_SIZE   ( BA_SIZE    ))
+    .ADDR_SIZE ( HADDR_SIZE    ),
+    .MAX_CSIZE ( MAX_CSIZE     ),
+    .MAX_RSIZE ( MAX_RSIZE     ),
+    .BA_SIZE   ( SDRAM_BA_SIZE ))
   map_addr_wr (
-    .clk_i     ( HCLK       ),
-    .csr_i     ( csr_i      ),
-    .address_i ( wradr      ),
-    .bank_o    ( wrba_o     ),
-    .row_o     ( wrrow_o    ),
-    .column_o  ( wrcol_o    )),
+    .clk_i     ( HCLK          ),
+    .csr_i     ( csr_i         ),
+    .address_i ( wradr         ),
+    .bank_o    ( wrba_o        ),
+    .row_o     ( wrrow_o       ),
+    .column_o  ( wrcol_o       )),
   map_addr_rd (
-    .clk_i     ( HCLK       ),
-    .csr_i     ( csr_i      ),
-    .address_i ( rdadr      ),
-    .bank_o    ( rdba_o     ),
-    .row_o     ( rdrow_o    ),
-    .column_o  ( rdcol_o    ));
+    .clk_i     ( HCLK          ),
+    .csr_i     ( csr_i         ),
+    .address_i ( rdadr         ),
+    .bank_o    ( rdba_o        ),
+    .row_o     ( rdrow_o       ),
+    .column_o  ( rdcol_o       ));
 
 endmodule : sdram_ahb_if

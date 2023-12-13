@@ -81,7 +81,6 @@ import sdram_ctrl_pkg::*;
   parameter int PORTS           = 1,
   parameter int CTRL_PORT       = 1,
   parameter int ADDR_SIZE       = 32,
-  parameter int RDATA_SIZE      = 32,
   parameter int WDATA_SIZE      = 32,
 
   parameter int SDRAM_ADDR_SIZE = 11,
@@ -102,7 +101,7 @@ import sdram_ctrl_pkg::*;
   input  logic [MAX_RSIZE      -1:0] rdrow_i    [PORTS],
   input  logic [MAX_CSIZE      -1:0] rdcol_i    [PORTS],
   input  logic [                2:0] rdsize_i   [PORTS],
-  output logic [RDATA_SIZE     -1:0] rdq_o      [PORTS],
+  output logic [SDRAM_DQ_SIZE  -1:0] rdq_o      [PORTS],
   output logic                       rdqvalid_o [PORTS],
 
   input  logic                       wrreq_i    [PORTS],
@@ -334,7 +333,7 @@ import sdram_ctrl_pkg::*;
     input [SDRAM_BA_SIZE-1:0] ba;
     input [MAX_CSIZE    -1:0] col;
     input                     ap;
-    input [              1:0] dsize;
+    input [              1:0] dqsize;
 
     cmd_none_task();
 
@@ -354,7 +353,7 @@ import sdram_ctrl_pkg::*;
     burst_cnt_load      = 1'b1;
 
     xfer_cnt_ld         = 1'b1;
-    xfer_cnt_ld_val     = (WDATA_SIZE/16 >> dsize) -1'h1; //WDATA/(16 * 2^dsize)
+    xfer_cnt_ld_val     = (WDATA_SIZE/16 >> dqsize) -1'h1; //WDATA/(16 * 2^dqsize)
     active_nxt_port     = port;
     active_nxt_wr       = 1'b1;
   endtask
@@ -364,7 +363,7 @@ import sdram_ctrl_pkg::*;
     input [SDRAM_BA_SIZE-1:0] ba;
     input [MAX_CSIZE    -1:0] col;
     input                     ap;
-    input [              1:0] dsize;
+    input [              1:0] dqsize;
 
     cmd_none_task();
 
@@ -384,7 +383,7 @@ import sdram_ctrl_pkg::*;
     burst_cnt_load      = 1'b1;
 
     xfer_cnt_ld         = 1'b1;
-    xfer_cnt_ld_val     = (RDATA_SIZE/16 >> dsize) -1'h1;
+    xfer_cnt_ld_val     = 0; //(RDATA_SIZE/16 >> dqsize) -1'h1;
     active_nxt_port     = port; //rdport;
     active_nxt_rd       = 1'b1;
   endtask
@@ -694,8 +693,8 @@ endgenerate
     end
     else
     begin
-        xfer_dq_wbuf <= xfer_dq_wbuf >> (16 << csr_i.ctrl.dsize);
-        xfer_dm_wbuf <= xfer_dm_wbuf >> ( 2 << csr_i.ctrl.dsize);
+        xfer_dq_wbuf <= xfer_dq_wbuf >> (16 << csr_i.ctrl.dqsize);
+        xfer_dm_wbuf <= xfer_dm_wbuf >> ( 2 << csr_i.ctrl.dqsize);
     end
 
 
@@ -792,7 +791,7 @@ endgenerate
                          if ( tRCD_done[wrba_i[wrport]] )
                          begin
                              //Write
-                             if (burst_cnt_done) cmd_wr_task(wrport, wrba_i[wrport], wrcol_i[wrport], csr_i.ctrl.ap, csr_i.ctrl.dsize);
+                             if (burst_cnt_done) cmd_wr_task(wrport, wrba_i[wrport], wrcol_i[wrport], csr_i.ctrl.ap, csr_i.ctrl.dqsize);
                          end
                      end
                      //Is the bank idle (precharged)?
@@ -815,7 +814,7 @@ endgenerate
                          if (tRCD_done[rdba_i[rdport]] )
                          begin
                              //Read
-                             if (burst_cnt_done) cmd_rd_task(rdport, rdba_i[rdport], rdcol_i[rdport], csr_i.ctrl.ap, csr_i.ctrl.dsize);
+                             if (burst_cnt_done) cmd_rd_task(rdport, rdba_i[rdport], rdcol_i[rdport], csr_i.ctrl.ap, csr_i.ctrl.dqsize);
                          end
                      end
                      //Is the bank idle (precharged)?

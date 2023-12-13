@@ -76,7 +76,7 @@ package sdram_ctrl_pkg;
     logic       iam;       //0:linear bank addressing
                            //1:interleaved bank addressing
     logic       ap;        //auto-precharge on read/write
-    logic [1:0] dsize;     //00: 16bits on DQ[ 15:0]
+    logic [1:0] dqsize;    //00: 16bits on DQ[ 15:0]
                            //01: 32bits on DQ[ 31:0]
                            //10: 64bits on DQ[ 63:0]
                            //11:128bits on DQ[127:0]
