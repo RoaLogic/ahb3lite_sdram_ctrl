@@ -85,7 +85,7 @@ import ahb3lite_pkg::*;
   //timing parameters (in ns)
   parameter real REFRESHES      = 4096;
   parameter real REFRESH_PERIOD = 64e-3; // refreshes every 64msecs
-  parameter int  tDAL           = 4;     // tDAL in cycles
+  parameter int  tWR            =  6.0;
   parameter real tRAS           = 42.0;
   parameter real tRP            = 18.0;
   parameter real tRCD           = 18.0;
@@ -236,16 +236,17 @@ import ahb3lite_pkg::*;
   );
     //Write timing parameters into timing CSR
     logic [15:0] tREF_cnt;
-    logic [ 3:0] tDAL_cnt;
+    logic [ 3:0] tWR_cnt;
     logic [ 3:0] tRAS_cnt;
     logic [ 3:0] tRP_cnt;
     logic [ 3:0] tRCD_cnt;
     logic [ 3:0] tRC_cnt;
-    logic [ 3:0] tRDV_cnt;
+    logic [ 2:0] tRDV_cnt;
     logic [31:0] regval;
 
     //get clk-period counts for each timing parameter
     tREF_cnt = refreshes / refresh_period / clk_period;
+    tWR_cnt  = get_t_period(tWR,  clk_period) +1;
     tRAS_cnt = get_t_period(tRAS, clk_period);
     tRP_cnt  = get_t_period(tRP,  clk_period);
     tRCD_cnt = get_t_period(tRCD, clk_period);
@@ -255,10 +256,19 @@ import ahb3lite_pkg::*;
     tRDV_cnt = 1+2 + get_t_period(1, clk_period);
 
     //register value
-    regval = {5'h0, tRDV_cnt, btac, 1'b0, cl, tDAL, tRAS_cnt, tRP_cnt, tRCD_cnt, tRC_cnt};
+    regval = {4'h0, tRDV_cnt, btac, 1'b0, cl, tWR_cnt, tRAS_cnt, tRP_cnt, tRCD_cnt, tRC_cnt};
 
     //write regval to timing CSR
-    $display("Writing timing CSR");
+    $display("Writing timing CSR (0x%8h)", regval);
+    $display("  - tRC =%0d (0x%0h)", tRC_cnt,  tRC_cnt);
+    $display("  - tRCD=%0d (0x%0h)", tRCD_cnt, tRCD_cnt);
+    $display("  - tRP =%0d (0x%0h)", tRP_cnt,  tRP_cnt);
+    $display("  - tRAS=%0d (0x%0h)", tRAS_cnt, tRAS_cnt);
+    $display("  - tWR =%0d (0x%0h)", tWR_cnt,  tWR_cnt);
+    $display("  - cl  =%0d (%2b)", cl, cl);
+    $display("  - btac=%0d      ", btac);
+    $display("  - tRDV=%0d (0x%0h)", tRDV_cnt, tRDV_cnt);
+
     apb_bfm.write(SDRAM_TIME, regval, 4'hf);
     //write tREF
     $display("Writing tREF CSR");
@@ -617,7 +627,7 @@ endgenerate
 
       repeat (100) @(posedge HCLK);
 
-      read_sdram_seq(HSIZE_B8, HBURST_SINGLE, 5);
+      read_sdram_seq(HSIZE_B32, HBURST_INCR16, 5);
 
       goodbye_msg();
 
