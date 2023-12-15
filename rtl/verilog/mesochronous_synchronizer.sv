@@ -5,7 +5,7 @@
 //   |  |\  \ ' '-' '\ '-'  |    |  '--.' '-' ' '-' ||  |\ `--.    //
 //   `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---'    //
 //                                             `---'               //
-//    Mesochronous FIFO                                            //
+//    Mesochronous Synchronizer                                    //
 //                                                                 //
 /////////////////////////////////////////////////////////////////////
 //                                                                 //
@@ -27,7 +27,7 @@
 /////////////////////////////////////////////////////////////////////
 
 // +FHDR -  Semiconductor Reuse Standard File Header Section  -------
-// FILE NAME      : mesochronous_fifo.sv
+// FILE NAME      : mesochronous_synchronizer.sv
 // DEPARTMENT     :
 // AUTHOR         : rherveille
 // AUTHOR'S EMAIL :
@@ -36,7 +36,7 @@
 // VERSION DATE        AUTHOR      DESCRIPTION
 // 1.0     2023-11-09  rherveille  initial release
 // ------------------------------------------------------------------
-// KEYWORDS : FIFO Mesochronous
+// KEYWORDS : Synchronizer Mesochronous
 // ------------------------------------------------------------------
 // PURPOSE  : Small FIFO to cross two phase shifted clock domains
 // ------------------------------------------------------------------
