@@ -627,7 +627,7 @@ endgenerate
     if (!rst_ni)
     begin
         xfer_cnt            <= {$bits(xfer_cnt){1'b0}};
-        xfer_cnt_done       <= 1'b0;
+        xfer_cnt_done       <= 1'b1;
         xfer_cnt_last_burst <= 1'b0;
         xfer_col            <= {$bits(xfer_col){1'bx}};
     end
@@ -669,7 +669,7 @@ endgenerate
 
   //write data/byte-enable transfer buffer
   always @(posedge clk_i)
-    if (wrreq_i[wrport] && wrrdy_o[wrport])
+    if (wrreq_i[wrport] && xfer_cnt_done)
     begin
         xfer_dq_wbuf <=  wrd_i [wrport];
         xfer_dm_wbuf <= ~wrbe_i[wrport];
@@ -776,7 +776,7 @@ endgenerate
                              if (burst_cnt_done)
                                cmd_wr_task(wrport,
                                            wrba_i [wrport],
-                                           wrcol_i[wrport],
+                                           xfer_cnt_done ? wrcol_i[wrport] : xfer_col,
                                            csr_i.ctrl.ap,
                                            csr_i.ctrl.dqsize,
                                            xfer_cnt_last_burst);
@@ -805,7 +805,7 @@ endgenerate
                              if (burst_cnt_done)
                                 cmd_rd_task(rdport,
                                             rdba_i  [rdport],
-                                            rdcol_i [rdport],
+                                            xfer_cnt_done ? rdcol_i [rdport] : xfer_col,
                                             rdsize_i[rdport],
                                             csr_i.ctrl.ap,
                                             csr_i.ctrl.dqsize,
@@ -883,14 +883,11 @@ endgenerate
 
 
   /* Assign outputs
-   * CMD and ADR must be delayed 1 cycle, becuase DQ/DM is late
    */
-  always @(posedge clk_i)
-  begin
-      sdram_cmd_o  <= sdram_cmd;
-      sdram_addr_o <= sdram_addr;
-      sdram_ba_o   <= sdram_ba;
-  end
+  //CMD
+  assign sdram_cmd_o = sdram_cmd;
+  assign sdram_addr_o = sdram_addr;
+  assign sdram_ba_o = sdram_ba;
 
   //DQ/DM
   assign sdram_dq_o = xfer_dq_wbuf[SDRAM_DQ_SIZE  -1:0];
@@ -900,9 +897,8 @@ endgenerate
   //DQoe
   always @(posedge clk_i)
     sdram_dqoe <= active_nxt_wr & (burst_cnt_load | ~burst_cnt_done);
+  assign sdram_dqoe_o = sdram_dqoe;
 
-  always @(posedge clk_i)
-    sdram_dqoe_o <= sdram_dqoe;
 
 
   /* DQ_in to AHB-IF
@@ -912,6 +908,5 @@ endgenerate
   always_comb
     for (int port=0; port < $size(rdq_o); port++)
       rdq_o[port] = sdram_dq_i;
-
 
 endmodule : sdram_cmd_scheduler
