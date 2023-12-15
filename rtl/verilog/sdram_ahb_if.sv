@@ -248,7 +248,7 @@ module sdram_ahb_if
      input [HSIZE_SIZE -1:0] hsize;
      input [            1:0] dqsize;
 
-     int totalbytes     = hsize2bytes(hsize) * hburst2cnt(hburst); 
+     int totalbytes     = hburst2cnt(hburst) << hsize;
      sdram_read_xfercnt = totalbytes/2 >> dqsize;
   endfunction : sdram_read_xfercnt
 
@@ -427,7 +427,7 @@ module sdram_ahb_if
         writebuffer_tag[0] <= {$bits(writebuffer_tag[0]){1'b0}};
         writebuffer_tag[1] <= {$bits(writebuffer_tag[1]){1'b0}};
     end
-    else if ( HREADY && hreadyout_wr_reg) writebuffer_tag[pingpong] <= tag;
+    else if ( HREADY && hreadyout_wr_reg) writebuffer_tag[pingpong] <= write_tag;
 
 
   //IDX
