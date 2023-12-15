@@ -86,7 +86,7 @@ package sdram_ctrl_pkg;
   } csr_ctrl_t;
  
   typedef struct packed {
-    logic [ 3:0] reserved31_27;
+    logic [ 4:0] reserved31_27;
     logic [ 2:0] tRDV;     //Read Command to data valid delay
                            //This is the total delay from the command-out until the 
                            //data is received. This includes PHY and PCB delays, but not CL
