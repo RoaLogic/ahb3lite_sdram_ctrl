@@ -116,7 +116,7 @@ module sdram_ahb_if
   output logic [SDRAM_BA_SIZE      -1:0] rdba_o,
   output logic [MAX_RSIZE          -1:0] rdrow_o,
   output logic [MAX_CSIZE          -1:0] rdcol_o,
-  output logic [                    2:0] rdsize_o,
+  output logic [                    7:0] rdsize_o,
   input  logic [SDRAM_DQ_SIZE      -1:0] rdq_i,
   input  logic                           rdqvalid_i,
 
@@ -204,33 +204,43 @@ module sdram_ahb_if
 
 
   //How many transactions in burst
-  function automatic logic [3:0] hburst2cnt;
+  function automatic int hburst2cnt;
     input [HBURST_SIZE-1:0] hburst;
 
     case (hburst)
-      HBURST_SINGLE: hburst2cnt =  0;
-      HBURST_INCR  : hburst2cnt = 15;
-      HBURST_WRAP4 : hburst2cnt =  3;
-      HBURST_INCR4 : hburst2cnt =  3;
-      HBURST_WRAP8 : hburst2cnt =  7;
-      HBURST_INCR8 : hburst2cnt =  7;
-      HBURST_WRAP16: hburst2cnt = 15;
-      HBURST_INCR16: hburst2cnt = 15;
+      HBURST_SINGLE: hburst2cnt =  1;
+      HBURST_INCR  : hburst2cnt = 16;
+      HBURST_WRAP4 : hburst2cnt =  4;
+      HBURST_INCR4 : hburst2cnt =  4;
+      HBURST_WRAP8 : hburst2cnt =  8;
+      HBURST_INCR8 : hburst2cnt =  8;
+      HBURST_WRAP16: hburst2cnt = 16;
+      HBURST_INCR16: hburst2cnt = 16;
     endcase
   endfunction : hburst2cnt
 
+
+  //How many bytes per beat
+  function automatic int hsize2bytes;
+    input [HBURST_SIZE-1:0] hsize;
+
+    hsize2bytes = 1 << hsize;
+  endfunction : hsize2bytes
+
+
   //Calculate how many SDRAM transactions required for the AHB read
-  function automatic sdram_burstsize_4_ahb_read;
+  function automatic logic [10:0] sdram_read_xfercnt;
     /*The number of SDRAM transactions dependends on the number of
-     *bytes to transfer, which depends on HSIZE and HBURST
-     *It also depends on csr.ctrl.burst_size
+     *bytes to transfer (which depends on HSIZE and HBURST) and the dqsize
      */
 
      input [HBURST_SIZE-1:0] hburst;
      input [HSIZE_SIZE -1:0] hsize;
      input [            1:0] dqsize;
 
-  endfunction : sdram_burstsize_4_ahb_read
+     int totalbytes     = hsize2bytes(hsize) * hburst2cnt(hburst); 
+     sdram_read_xfercnt = totalbytes/2 >> dqsize;
+  endfunction : sdram_read_xfercnt
 
 
 /*
@@ -303,7 +313,7 @@ module sdram_ahb_if
 
   logic                           rdreq;
   logic [HADDR_SIZE         -1:0] rdadr;
-  logic [                    2:0] rdsize;
+  logic [                    7:0] rdsize;
 
   logic                           wrreq;
   logic [HADDR_SIZE         -1:0] wradr;
@@ -482,8 +492,7 @@ module sdram_ahb_if
 
                        rdreq  = 1'b1;
                        rdadr  = HADDR;
-                       rdsize = HSIZE; //handle HBURST and HSIZE, chop requests into max BUFFERSIZE transactions
-                                             //all controllers say 'read always burst size'
+                       rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
                    end
 
         //wait for SDRAM to fill buffer

@@ -182,7 +182,7 @@ module ahb3lite_sdram_ctrl
   logic [SDRAM_BA_SIZE  -1:0] rdba      [AHB_PORTS];
   logic [MAX_RSIZE      -1:0] rdrow     [AHB_PORTS];
   logic [MAX_CSIZE      -1:0] rdcol     [AHB_PORTS];
-  logic [HSIZE_SIZE     -1:0] rdsize    [AHB_PORTS];
+  logic [                7:0] rdsize    [AHB_PORTS];
   logic [HDATA_SIZE     -1:0] rdq       [AHB_PORTS];
   logic                       rdqvalid  [AHB_PORTS];
 
@@ -246,7 +246,8 @@ generate
         .HADDR_SIZE       ( HADDR_SIZE         ),
         .HDATA_SIZE       ( HDATA_SIZE         ),
         .WRITEBUFFER_SIZE ( WRITEBUFFER_SIZE   ),
-        .BA_SIZE          ( SDRAM_BA_SIZE      ),
+        .SDRAM_DQ_SIZE    ( SDRAM_DQ_SIZE      ),
+        .SDRAM_BA_SIZE    ( SDRAM_BA_SIZE      ),
         .MAX_CSIZE        ( MAX_CSIZE          ),
         .MAX_RSIZE        ( MAX_RSIZE          ))
       ahb_if (
@@ -301,7 +302,6 @@ endgenerate
     .PORTS           ( AHB_PORTS       ),
     .CTRL_PORT       ( AHB_CTRL_PORT   ),
     .ADDR_SIZE       ( HADDR_SIZE      ),
-    .RDATA_SIZE      ( HDATA_SIZE      ),
     .WDATA_SIZE      ( HDATA_SIZE * WRITEBUFFER_SIZE ),
 
     .SDRAM_ADDR_SIZE ( SDRAM_ADDR_SIZE ),
