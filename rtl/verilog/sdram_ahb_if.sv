@@ -150,9 +150,12 @@ module sdram_ahb_if
   localparam BUFFER_ADR_SIZE = $clog2(BUFFER_BYTES);
   localparam BUFFER_TAG_SIZE = HADDR_SIZE - BUFFER_ADR_SIZE;
 
-  //ReadBuffer-size = max(SDRAM_BURST_SIZE_MAX * SDRAM_DQ_SIZE, HBURST_MAX * HSIZE_MAX)
-  //                = max(8 * SDRAM_DQ_SIZE, 16 * 1024) 
-  localparam RDBUFFER_DSIZE  = max(8 * SDRAM_DQ_SIZE, 16 * 1024);
+  localparam HSIZE_MAX       = $clog2(HDATA_BYTES);
+  localparam HBURST_MAX      = 16;
+
+  //ReadBuffer-size = max(SDRAM_BURST_SIZE_MAX * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE)
+  localparam RDBUFFER_SIZE  = max(8 * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE);
+
 
   //////////////////////////////////////////////////////////////////
   //
@@ -288,6 +291,7 @@ module sdram_ahb_if
   logic                         ahb_read,
                                 ahb_write;
 
+  //Write
   logic                         write,
                                 read;
   logic [HDATA_BYTES      -1:0] be;
@@ -307,9 +311,14 @@ module sdram_ahb_if
                                 pingpong_toggle,
                                 nxt_pingpong;
 
+  //Read
+  logic [RDBUFFER_SIZE           -1:0] rdbuffer;
+  logic [$clog2(RDBUFFER_SIZE/16)-1:0] rdbuffer_idx;
+
+
   //FSM encoding
-  enum {rd_idle, rd_read} rd_nxt_state, rd_state;
-  enum {wr_idle, wr_wait} wr_nxt_state, wr_state;
+  enum logic {rd_idle, rd_read} rd_nxt_state, rd_state;
+  enum logic {wr_idle = 1'b0, wr_wait=1'b1} wr_nxt_state, wr_state;
 
   logic hreadyout_rd, hreadyout_rd_reg;
   logic hreadyout_wr, hreadyout_wr_reg;
@@ -334,12 +343,16 @@ module sdram_ahb_if
   // Tasks
   //
   task flush;
-      input wrrdy;
+      input                         dirty;
+      input                         wrrdy;
+      input [BUFFER_TAG_SIZE  -1:0] tag;
+      input [BUFFER_BYTES     -1:0] be;
+      input [WRITEBUFFER_DSIZE-1:0] writebuffer;
 
-      if (!writebuffer_dirty[~pingpong] || wrrdy) //other buffer clean?
+      if (!dirty || wrrdy) //other buffer clean?
       begin
           //flush
-          go_flush();
+          go_flush(tag, be, writebuffer);
       end
       else //other buffer not clean; wait for it to be processed
       begin
@@ -353,16 +366,20 @@ module sdram_ahb_if
 
 
   task go_flush;
+    input [BUFFER_TAG_SIZE  -1:0] tag;
+    input [BUFFER_BYTES     -1:0] be;
+    input [WRITEBUFFER_DSIZE-1:0] writebuffer;
+
     //flush
     wr_nxt_state    = wr_idle;
     hreadyout_wr    = 1'b1;
     pingpong_toggle = 1'b1;
 
     wrreq     = 1'b1;
-    wradr     = {writebuffer_tag[pingpong], {BUFFER_ADR_SIZE{1'b0}}};
+    wradr     = {tag, {BUFFER_ADR_SIZE{1'b0}}};
     wrsize    = $clog2(BUFFER_BYTES) -1'h1;
-    wrbe      = writebuffer_be[pingpong];
-    wrd       = writebuffer[pingpong];
+    wrbe      = be;
+    wrd       = writebuffer;
   endtask : go_flush
 
 
@@ -381,10 +398,11 @@ module sdram_ahb_if
   assign ahb_read  = HSEL & ~HWRITE & (HTRANS != HTRANS_BUSY) & (HTRANS != HTRANS_IDLE);
 
 
+  /* Write
+   */
   //generate write enable
   always @(posedge HCLK)
     if (HREADY) write <= ahb_write;
-    else        write <= 1'b0;
 
 
   //decode Byte-Enables
@@ -409,19 +427,20 @@ module sdram_ahb_if
         writebuffer_tag[0] <= {$bits(writebuffer_tag[0]){1'b0}};
         writebuffer_tag[1] <= {$bits(writebuffer_tag[1]){1'b0}};
     end
-    else if ( HREADY ) writebuffer_tag[nxt_pingpong] <= write_tag;
+    else if ( HREADY && hreadyout_wr_reg) writebuffer_tag[pingpong] <= tag;
 
 
   //IDX
   always @(posedge HCLK)
-    idx <= HADDR[BUFFER_ADR_SIZE -1:0] & ~{$clog2(HDATA_SIZE/8){1'b1}}; //do not double count address + byte-enables
+    if (HREADY)
+      idx <= HADDR[BUFFER_ADR_SIZE -1:0] & ~{$clog2(HDATA_SIZE/8){1'b1}}; //do not double count address + byte-enables
 
 
   //Writebuffer
   always @(posedge HCLK)
     if (write)
       for (int i=0; i < HDATA_BYTES; i++)
-        if (be[i]) writebuffer[nxt_pingpong][(idx + i)*8 +: 8] <= HWDATA[i*8 +: 8];
+        if (be[i] && hreadyout_wr_reg) writebuffer[pingpong][(idx + i)*8 +: 8] <= HWDATA[i*8 +: 8];
 
 
   //Byte enables
@@ -432,15 +451,13 @@ module sdram_ahb_if
         writebuffer_be[1] <= {$bits(writebuffer_be[1]){1'b0}};
     end
     else
-    case ({write, pingpong_toggle})
-      2'b00: ; //do nothing
-      2'b01: writebuffer_be[pingpong]                     <= {BUFFER_BYTES{1'b0}};
-      2'b10: writebuffer_be[pingpong][idx +: HDATA_BYTES] <= writebuffer_be[pingpong][idx +: HDATA_BYTES] | be;
-      2'b11: begin
-                 writebuffer_be[nxt_pingpong]                     <= {BUFFER_BYTES{1'b0}};
-                 writebuffer_be[nxt_pingpong][idx +: HDATA_BYTES] <= be;
-             end
-    endcase
+    begin
+        if (pingpong_toggle)
+          writebuffer_be[nxt_pingpong] <= {BUFFER_BYTES{1'b0}};
+
+        if (write && hreadyout_wr_reg)
+          writebuffer_be[pingpong][idx +: HDATA_BYTES] <= writebuffer_be[pingpong][idx +: HDATA_BYTES] | be;
+    end
 
 
   //Dirty
@@ -452,8 +469,8 @@ module sdram_ahb_if
     end
     else
     begin
-        if ( write             ) writebuffer_dirty[ nxt_pingpong] <= 1'b1;
-        if ( wrreq_o && wrrdy_i) writebuffer_dirty[~pingpong    ] <= 1'b0;
+        if ( write   && hreadyout_wr_reg) writebuffer_dirty[ pingpong] <= 1'b1;
+        if ( wrreq_o && wrrdy_i         ) writebuffer_dirty[~pingpong] <= 1'b0;
     end
 
 
@@ -472,9 +489,71 @@ module sdram_ahb_if
 
     
   //Flush
-  assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag       == writebuffer_tag[       0])) |
-                             (ahb_read  & writebuffer_dirty[       1] & (tag       == writebuffer_tag[       1])) |
-                             (ahb_write & writebuffer_dirty[pingpong] & (write_tag != writebuffer_tag[pingpong]));
+  assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag == writebuffer_tag[       0])) |
+                             (ahb_read  & writebuffer_dirty[       1] & (tag == writebuffer_tag[       1])) |
+                             (ahb_write & writebuffer_dirty[pingpong] & (tag != writebuffer_tag[pingpong]));
+
+
+  //Write FSM
+  always_comb
+  begin
+      wr_nxt_state   = wr_state;
+      hreadyout_wr   = hreadyout_wr_reg;
+
+      wrreq    = wrreq_o & ~wrrdy_i;
+      wradr    = wradr_o;
+      wrsize   = wrsize_o;
+      wrbe     = wrbe_o;
+      wrd      = wrd_o;
+
+      pingpong_toggle = 1'b0;
+
+      case (wr_state)
+        //wait for action
+        wr_idle: if (HREADY)
+                 begin
+                     if ( (ahb_read || ahb_write) && writebuffer_flush)
+                       flush(writebuffer_dirty[~pingpong],
+                             wrrdy_i,
+                             writebuffer_tag  [ pingpong],
+                             {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
+                             {HWDATA, writebuffer    [pingpong][0 +: $bits(writebuffer   [0]) - HDATA_SIZE]});
+                 end
+                 else if (writebuffer_timer_expired) //timer expired
+                   flush(writebuffer_dirty[~pingpong],
+                         wrrdy_i,
+                         writebuffer_tag  [ pingpong],
+                         {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
+                         {HWDATA, writebuffer    [pingpong][0 +: $bits(writebuffer   [0]) - HDATA_SIZE]});
+
+        //wait for pending wrreq to complete
+        wr_wait: if (wrrdy_i)
+                  go_flush(writebuffer_tag[pingpong],
+                           writebuffer_be [pingpong],
+                           writebuffer    [pingpong]);
+      endcase
+    end
+
+
+
+  /* Read
+   */
+
+  //ReadBuffer
+  always @(posedge HCLK, negedge HRESETn)
+    if (!HRESETn) rdbuffer_idx <= {$bits(rdbuffer_idx){1'b0}};
+    else
+    case (rdqvalid_i)
+      1'b0: ;
+      1'b1: rdbuffer_idx <= rdbuffer_idx + 1'h1;
+    endcase
+
+  //ReadBuffer
+  always @(posedge HCLK)
+    case (rdqvalid_i)
+      1'b0: ;
+      1'b1: rdbuffer[rdbuffer_idx * (16 << csr_i.ctrl.dqsize) +: SDRAM_DQ_SIZE] <= rdq_i;
+    endcase
 
 
   //Read FSM
@@ -516,35 +595,10 @@ module sdram_ahb_if
     end
 
 
-  //Write FSM
-  always_comb
-  begin
-      wr_nxt_state   = wr_state;
-      hreadyout_wr   = hreadyout_wr_reg;
-
-      wrreq    = wrreq_o & ~wrrdy_i;
-      wradr    = wradr_o;
-      wrsize   = wrsize_o;
-      wrbe     = wrbe_o;
-      wrd      = wrd_o;
-
-      pingpong_toggle = 1'b0;
-
-      case (wr_state)
-        //wait for action
-        wr_idle: if (HREADY)
-                 begin
-                     if ( (ahb_read || ahb_write) && writebuffer_flush) flush(wrrdy_i);
-                 end
-                 else if (writebuffer_timer_expired) flush(wrrdy_i); //timer expired
-
-        //wait for pending wrreq to complete
-        wr_wait: if (wrrdy_i) go_flush();
-      endcase
-    end
 
 
-  //FSM registers
+  /* FSM registers
+   */
   always @(posedge HCLK, negedge HRESETn)
     if (!HRESETn)
     begin
@@ -593,6 +647,8 @@ module sdram_ahb_if
 
 
 
+  /* SDRAM Bank, Row, Column generation
+   */
   sdram_address_mapping #(
     .ADDR_SIZE ( HADDR_SIZE    ),
     .MAX_CSIZE ( MAX_CSIZE     ),
