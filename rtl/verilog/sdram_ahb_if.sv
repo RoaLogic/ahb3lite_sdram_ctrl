@@ -140,12 +140,19 @@ module sdram_ahb_if
   //
   // Constants
   //
+  function int max(input int a, input int b);
+    max = a > b ? a : b;
+  endfunction : max
+
+
   localparam HDATA_BYTES     = HDATA_SIZE/8;
   localparam BUFFER_BYTES    = WRITEBUFFER_DSIZE/8;
   localparam BUFFER_ADR_SIZE = $clog2(BUFFER_BYTES);
   localparam BUFFER_TAG_SIZE = HADDR_SIZE - BUFFER_ADR_SIZE;
 
-  //localparam RDBUFFER_DSIZE  = 
+  //ReadBuffer-size = max(SDRAM_BURST_SIZE_MAX * SDRAM_DQ_SIZE, HBURST_MAX * HSIZE_MAX)
+  //                = max(8 * SDRAM_DQ_SIZE, 16 * 1024) 
+  localparam RDBUFFER_DSIZE  = max(8 * SDRAM_DQ_SIZE, 16 * 1024);
 
   //////////////////////////////////////////////////////////////////
   //

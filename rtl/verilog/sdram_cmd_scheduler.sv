@@ -129,13 +129,17 @@ import sdram_ctrl_pkg::*;
   //
   // Constants
   //
+  function int max(input int a, input int b);
+    max = a > b ? a : b;
+  endfunction : max
+
   localparam int PORTS_BITS    = $clog2(PORTS) +1;
   localparam int BANKS         = 1 << SDRAM_BA_SIZE;
 
   //There are WDATA_SIZE/8 bytes
   //Minimum DQ size is 16bits (2 bytes)
   localparam int WDATA_XFER_CNT_SIZE = $clog2(WDATA_SIZE /16) +1;
-  localparam int XFER_CNT_SIZE       = WDATA_XFER_CNT_SIZE > 8 ? WDATA_XFER_CNT_SIZE : 8;
+  localparam int XFER_CNT_SIZE       = max(WDATA_XFER_CNT_SIZE, 8);
 
 
   //////////////////////////////////////////////////////////////////
@@ -232,7 +236,6 @@ import sdram_ctrl_pkg::*;
                               wrreq_bank_act;
   logic [PORTS_BITS     -1:0] wrport;
   logic                       wr_pending;
-  logic [                1:0] wrrdy_state    [PORTS];
 
   states_t                    nxt_state,      state;
   sdram_cmds_t                sdram_nxt_cmd,  sdram_cmd;
@@ -652,41 +655,13 @@ generate
   begin: gen_wrrdy
       //wrrdy generation
       always @(posedge clk_i, negedge rst_ni)
-        if (!rst_ni)
-        begin
-            wrrdy_state[port] <= 2'b00;
-            wrrdy_o    [port] <= 1'b0;
-        end
+        if (!rst_ni) wrrdy_o[port] <= 1'b0;
         else
-        case (wrrdy_state[port])
-          2'b00: if ((port == wrport) && active_wr && xfer_cnt_last_burst)
-                 begin
-                     wrrdy_state[port] <= 2'b01;
-                     wrrdy_o    [port] <= 1'b1;
-                 end
+        case (wrrdy_o[port])
+          1'b0: if ((port == wrport) && active_wr && xfer_cnt_last_burst)
+                  wrrdy_o[port] <= 1'b1;
 
-          2'b01: //if (wrreq_i[port])
-                 begin
-                     wrrdy_state[port] <= 2'b00; //2'b10;
-                     wrrdy_o    [port] <= 1'b0;
-                 end
-
-          2'b10: if (xfer_cnt_done)
-                   if ((port == wrport) && active_nxt_wr)
-                   begin
-                       wrrdy_state[port] <= 2'b01;
-                       wrrdy_o    [port] <= 1'b1;
-                   end
-                   else
-                   begin
-                       wrrdy_state[port] <= 2'b00;
-                       wrrdy_o    [port] <= 1'b0;
-                   end
-
-          default: begin //oops
-                       wrrdy_state[port] <= 2'b00;
-                       wrrdy_o    [port] <= 1'b0;
-                   end
+          1'b1: wrrdy_o    [port] <= 1'b0;
         endcase
   end
 endgenerate
@@ -740,7 +715,6 @@ endgenerate
         active_nxt_port     = active_port & ~{$bits(active_port){xfer_cnt_done}};
         active_nxt_rd       = active_rd & ~xfer_cnt_done;
         active_nxt_wr       = active_wr & ~xfer_cnt_done;
-
 
         for (int port = 0; port < PORTS; port++)
         begin
