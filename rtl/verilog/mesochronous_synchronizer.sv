@@ -41,8 +41,9 @@
 // PURPOSE  : Small FIFO to cross two phase shifted clock domains
 // ------------------------------------------------------------------
 // PARAMETERS
-//  PARAM NAME        RANGE    DESCRIPTION              DEFAULT UNITS
-//  INIT_DLY_CNT      1+       Powerup delay            2500    cycles
+//  PARAM NAME        RANGE    DESCRIPTION               DEFAULT UNITS
+//  DATA_SIZE         1+       Number of data bits       32
+//  REGISTERED_OUTPUT [YES,NO] Add output register stage NO
 // ------------------------------------------------------------------
 // REUSE ISSUES 
 //   Reset Strategy      : rst_ni, asynchronous, active low
@@ -125,7 +126,7 @@
 module mesochronous_synchronizer
 #(
   parameter int DATA_SIZE       = 32,
-  parameter int REGISTER_OUTPUT = "NO"
+  parameter int REGISTERED_OUTPUT = "NO"
 )
 (
   input  logic                  wrrst_ni,
@@ -173,7 +174,7 @@ module mesochronous_synchronizer
 
 
 generate
-if (REGISTER_OUTPUT != "NO")
+if (REGISTERED_OUTPUT != "NO")
   always @(posedge rdclk_i)
     q_o <= memory[rdptr];
 
