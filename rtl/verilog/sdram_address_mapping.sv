@@ -97,7 +97,7 @@ module sdram_address_mapping
 
 
   //1. handle dqsize
-  assign address_dqsize = address_i >> csr_i.ctrl.dqsize;
+  assign address_dqsize = address_i >> csr_i.ctrl.dqsize >> 1;
 
   //2. extract column; LSBs of adr_dqsize
   always @(posedge clk_i)
