@@ -246,17 +246,17 @@ import ahb3lite_pkg::*;
 
     //get clk-period counts for each timing parameter
     tREF_cnt = refreshes / refresh_period / clk_period;
-    tWR_cnt  = get_t_period(tWR,  clk_period) +1;
+    tWR_cnt  = get_t_period(tWR,  clk_period);
     tRAS_cnt = get_t_period(tRAS, clk_period);
     tRP_cnt  = get_t_period(tRP,  clk_period);
     tRCD_cnt = get_t_period(tRCD, clk_period);
     tRC_cnt  = get_t_period(tRFC > tRC ? tRFC : tRC,  clk_period);
 
     //Data valid at controller: PHY-delay (output + input) + PCB delay
-    tRDV_cnt = 1+2 + get_t_period(1, clk_period);
+    tRDV_cnt = 0 + 2 + get_t_period(1, clk_period);
 
     //register value
-    regval = {4'h0, tRDV_cnt, btac, 1'b0, cl, tWR_cnt, tRAS_cnt, tRP_cnt, tRCD_cnt, tRC_cnt};
+    regval = {5'h0, tRDV_cnt, btac, 1'b0, cl, tWR_cnt, tRAS_cnt, tRP_cnt, tRCD_cnt, tRC_cnt};
 
     //write regval to timing CSR
     $display("Writing timing CSR (0x%8h)", regval);
