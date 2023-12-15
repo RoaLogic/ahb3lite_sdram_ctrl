@@ -100,7 +100,7 @@ import sdram_ctrl_pkg::*;
   input  logic [SDRAM_BA_SIZE  -1:0] rdba_i     [PORTS],
   input  logic [MAX_RSIZE      -1:0] rdrow_i    [PORTS],
   input  logic [MAX_CSIZE      -1:0] rdcol_i    [PORTS],
-  input  logic [                2:0] rdsize_i   [PORTS],
+  input  logic [                7:0] rdsize_i   [PORTS],
   output logic [SDRAM_DQ_SIZE  -1:0] rdq_o      [PORTS],
   output logic                       rdqvalid_o [PORTS],
 
@@ -132,13 +132,10 @@ import sdram_ctrl_pkg::*;
   localparam int PORTS_BITS    = $clog2(PORTS) +1;
   localparam int BANKS         = 1 << SDRAM_BA_SIZE;
 
-  //WDATA_SIZE is at least as big as RDATA_SIZE. There are WDATA_SIZE/8 bytes
-  //SDRAM supports max burst of 8
+  //There are WDATA_SIZE/8 bytes
   //Minimum DQ size is 16bits (2 bytes)
-  localparam int XFER_CNT_SIZE = $clog2(WDATA_SIZE /16) +1;
-
-  //Max amount of bits to transfer in 1 burst
-  localparam int XFER_SR_SIZE  = SDRAM_DQ_SIZE *8;
+  localparam int WDATA_XFER_CNT_SIZE = $clog2(WDATA_SIZE /16) +1;
+  localparam int XFER_CNT_SIZE       = WDATA_XFER_CNT_SIZE > 8 ? WDATA_XFER_CNT_SIZE : 8;
 
 
   //////////////////////////////////////////////////////////////////
@@ -211,8 +208,7 @@ import sdram_ctrl_pkg::*;
                               xfer_cnt_ld_val;
   logic                       xfer_cnt_ld;
   logic                       xfer_cnt_done;
-  logic                       xfer_rd_done;
-  logic                       xfer_wr_done;
+  logic                       xfer_cnt_last_burst;
   logic [MAX_CSIZE      -1:0] xfer_col;
   logic [PORTS_BITS     -1:0] active_nxt_port, active_port;
   logic                       active_nxt_rd, active_rd,
@@ -283,6 +279,7 @@ import sdram_ctrl_pkg::*;
     xfer_cnt_ld_val     = {$bits(xfer_cnt_ld_val){1'bx}};
   endtask
 
+
   task automatic cmd_ref_task;
     cmd_none_task();
 
@@ -292,6 +289,7 @@ import sdram_ctrl_pkg::*;
     refreshing    = 1'b1;
   endtask 
 
+
   task automatic cmd_pre_all_task;
     cmd_none_task();
 
@@ -300,6 +298,7 @@ import sdram_ctrl_pkg::*;
     tRP_load           = {BANKS{1'b1}};
     bank_nxt_status    = BANK_STATUS_ALL_IDLE;
   endtask
+
 
   task automatic cmd_pre_task;
     input [SDRAM_BA_SIZE-1:0] ba;
@@ -312,6 +311,7 @@ import sdram_ctrl_pkg::*;
     tRP_load       [ba] = 1'b1;
     bank_nxt_status[ba] = BANK_STATUS_IDLE;
   endtask
+
 
   task automatic cmd_act_task;
     input [SDRAM_BA_SIZE-1:0] ba;
@@ -328,27 +328,32 @@ import sdram_ctrl_pkg::*;
     bank_nxt_row   [ba] = row;
   endtask
 
+
   task automatic cmd_wr_task;
     input [PORTS_BITS   -1:0] port;
     input [SDRAM_BA_SIZE-1:0] ba;
     input [MAX_CSIZE    -1:0] col;
     input                     ap;
     input [              1:0] dqsize;
+    input                     last_burst;
+
+    logic go_ap;
 
     cmd_none_task();
 
+    go_ap               = ap & last_burst;
+
     sdram_nxt_cmd       = CMD_WR;
     sdram_nxt_addr      = col;
-    sdram_nxt_addr [10] = ap;
-    tRP_load       [ba] = ap;
+    sdram_nxt_addr [10] = go_ap;
+    tRP_load       [ba] = go_ap;
 //    tRAS
 //and tWR cycle(s) after last valid data
 //or  interrupted by read or write (with or without auto precharge)
-    tRP_load_val        = { {$bits(tRP_cnt[0])-$bits(csr_i.timing.tRP){1'b0}}, csr_i.timing.tRP }
-                          + tRAS_cnt[port]
-                          + csr_i.timing.tDAL
-                          +1;
-    bank_nxt_status[ba] = ap ? BANK_STATUS_IDLE : bank_status[ba];
+    tRP_load_val        = tRAS_cnt[port]
+                          + (1 << csr_i.ctrl.burst_size)
+                          + csr_i.timing.tWR;
+    bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
 
     burst_cnt_load      = 1'b1;
 
@@ -358,32 +363,38 @@ import sdram_ctrl_pkg::*;
     active_nxt_wr       = 1'b1;
   endtask
 
+
   task automatic cmd_rd_task;
     input [PORTS_BITS   -1:0] port;
     input [SDRAM_BA_SIZE-1:0] ba;
     input [MAX_CSIZE    -1:0] col;
+    input [              7:0] rdsize;
     input                     ap;
     input [              1:0] dqsize;
+    input                     last_burst;
+
+    logic go_ap;
 
     cmd_none_task();
 
+    go_ap               = ap & (~|rdsize | last_burst);
+
     sdram_nxt_cmd       = CMD_RD;
-    sdram_nxt_addr      = col; //rdcol_i[rdport]
-    sdram_nxt_addr [10] = ap;
-    tRP_load       [ba] = ap;
+    sdram_nxt_addr      = col;
+    sdram_nxt_addr [10] = go_ap;
+    tRP_load       [ba] = go_ap;
 //    tRAS
 //and CAS Latency -1 cycles before last burst
 //or  interrupted by read or write (with or without auto precharge)
-    tRP_load_val        = { {$bits(tRP_cnt[0])-$bits(csr_i.timing.tRP){1'b0}}, csr_i.timing.tRP }
-                          + tRAS_cnt[port]
-                          + csr_i.ctrl.burst_size - (csr_i.timing.cl -2'h2)
-                          +1;
-    bank_nxt_status[ba] = ap ? BANK_STATUS_IDLE : bank_status[ba];
+    tRP_load_val        = tRAS_cnt[port]
+                          + (1 << csr_i.ctrl.burst_size) - (csr_i.timing.cl -1'h1)
+                          + csr_i.timing.tRP;
+    bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
 
     burst_cnt_load      = 1'b1;
 
     xfer_cnt_ld         = 1'b1;
-    xfer_cnt_ld_val     = 0; //(RDATA_SIZE/16 >> dqsize) -1'h1;
+    xfer_cnt_ld_val     = rdsize;
     active_nxt_port     = port; //rdport;
     active_nxt_rd       = 1'b1;
   endtask
@@ -428,8 +439,8 @@ generate
         end
         else if (tRP_load[bank])
         begin
-            tRP_cnt [bank] <=  tRP_load_val; //{ {$bits(tRP_cnt[bank]-$bits(csr_i.timing.tRP){1'b0}}, csr_i.timing.tRP };
-            tRP_done[bank] <= ~|tRP_load_val; //~|csr_i.timing.tRP;
+            tRP_cnt [bank] <=  tRP_load_val;
+            tRP_done[bank] <= ~|tRP_load_val;
         end
         else if (!tRP_done[bank])
         begin
@@ -565,7 +576,7 @@ endgenerate
           rdcmd_queue[r] <= {$bits(rdcmd_t){1'b0}};
     else
     begin
-        rdcmd_queue[$size(rdcmd_queue)] <= {$bits(rdcmd_t){1'b0}};
+        rdcmd_queue[$size(rdcmd_queue)-1] <= {$bits(rdcmd_t){1'b0}};
 
         for (int r=0; r < $size(rdcmd_queue) -1; r++)
           rdcmd_queue[r] <= rdcmd_queue[r+1];
@@ -612,28 +623,25 @@ endgenerate
   always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
     begin
-        xfer_cnt      <= {$bits(xfer_cnt){1'b0}};
-        xfer_cnt_done <= 1'b0;
-        xfer_rd_done  <= 1'b0;
-        xfer_wr_done  <= 1'b0;
-        xfer_col      <= {$bits(xfer_col){1'bx}};
+        xfer_cnt            <= {$bits(xfer_cnt){1'b0}};
+        xfer_cnt_done       <= 1'b0;
+        xfer_cnt_last_burst <= 1'b0;
+        xfer_col            <= {$bits(xfer_col){1'bx}};
     end
     else if (|xfer_cnt)
     begin
         //there's a special case for burst_size=1; add another tick
-        xfer_cnt      <=  xfer_cnt -1'h1;
-        xfer_cnt_done <= (xfer_cnt == 1'h1);
-        xfer_rd_done  <= (xfer_cnt == (1'h1 << csr_i.ctrl.burst_size) +1'h1 + ~|csr_i.ctrl.burst_size) & active_rd;
-        xfer_wr_done  <= (xfer_cnt == (1'h1 << csr_i.ctrl.burst_size) +1'h1 + ~|csr_i.ctrl.burst_size) & active_wr;
-        xfer_col      <=  xfer_col +1'h1;
+        xfer_cnt            <=  xfer_cnt -1'h1;
+        xfer_cnt_done       <= (xfer_cnt == 1'h1);
+        xfer_cnt_last_burst <= (xfer_cnt == (1 << csr_i.ctrl.burst_size) +1'h1);
+        xfer_col            <=  xfer_col +1'h1;
     end
     else if (xfer_cnt_ld) //ignore xfer_cnt_ld if current transfer not done
     begin
-        xfer_cnt      <=   xfer_cnt_ld_val;
-        xfer_cnt_done <= ~|xfer_cnt_ld_val;
-        xfer_rd_done  <= ~|xfer_cnt_ld_val;
-        xfer_wr_done  <= ~|xfer_cnt_ld_val;
-        xfer_col      <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
+        xfer_cnt            <=   xfer_cnt_ld_val;
+        xfer_cnt_done       <= ~|xfer_cnt_ld_val;
+        xfer_cnt_last_burst <= ~|xfer_cnt_ld_val;
+        xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
     end
 
 
@@ -651,20 +659,20 @@ generate
         end
         else
         case (wrrdy_state[port])
-          2'b00: if ((port == wrport) & active_nxt_wr)
+          2'b00: if ((port == wrport) && active_wr && xfer_cnt_last_burst)
                  begin
                      wrrdy_state[port] <= 2'b01;
                      wrrdy_o    [port] <= 1'b1;
                  end
 
-          2'b01: if (wrreq_i[port])
+          2'b01: //if (wrreq_i[port])
                  begin
-                     wrrdy_state[port] <= 2'b10;
+                     wrrdy_state[port] <= 2'b00; //2'b10;
                      wrrdy_o    [port] <= 1'b0;
                  end
 
           2'b10: if (xfer_cnt_done)
-                   if ((port == wrport) & active_nxt_wr)
+                   if ((port == wrport) && active_nxt_wr)
                    begin
                        wrrdy_state[port] <= 2'b01;
                        wrrdy_o    [port] <= 1'b1;
@@ -791,7 +799,13 @@ endgenerate
                          if ( tRCD_done[wrba_i[wrport]] )
                          begin
                              //Write
-                             if (burst_cnt_done) cmd_wr_task(wrport, wrba_i[wrport], wrcol_i[wrport], csr_i.ctrl.ap, csr_i.ctrl.dqsize);
+                             if (burst_cnt_done)
+                               cmd_wr_task(wrport,
+                                           wrba_i [wrport],
+                                           wrcol_i[wrport],
+                                           csr_i.ctrl.ap,
+                                           csr_i.ctrl.dqsize,
+                                           xfer_cnt_last_burst);
                          end
                      end
                      //Is the bank idle (precharged)?
@@ -814,7 +828,14 @@ endgenerate
                          if (tRCD_done[rdba_i[rdport]] )
                          begin
                              //Read
-                             if (burst_cnt_done) cmd_rd_task(rdport, rdba_i[rdport], rdcol_i[rdport], csr_i.ctrl.ap, csr_i.ctrl.dqsize);
+                             if (burst_cnt_done)
+                                cmd_rd_task(rdport,
+                                            rdba_i  [rdport],
+                                            rdcol_i [rdport],
+                                            rdsize_i[rdport],
+                                            csr_i.ctrl.ap,
+                                            csr_i.ctrl.dqsize,
+                                            xfer_cnt_last_burst);
                          end
                      end
                      //Is the bank idle (precharged)?
