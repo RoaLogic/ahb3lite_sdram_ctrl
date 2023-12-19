@@ -600,8 +600,8 @@ endgenerate
     end
     else if (rdcmd_queue[1].valid)
     begin
-        rdcmd_queue_cnt                  <= 1 << csr_i.ctrl.burst_size;
-        rdcmd_queue_cnt_done             <= 1'b0;
+        rdcmd_queue_cnt      <= 1 << csr_i.ctrl.burst_size;
+        rdcmd_queue_cnt_done <= 1'b0;
 
         for (int p=0; p < $size(rdqvalid_o); p++)
           rdqvalid_o[p] <= 1'b0;
@@ -612,14 +612,13 @@ endgenerate
     begin
         rdcmd_queue_cnt      <= rdcmd_queue_cnt -1'h1;
         rdcmd_queue_cnt_done <= rdcmd_queue_cnt == 'h1;
-    end
-    else
-    begin
+
         for (int p=0; p < $size(rdqvalid_o); p++)
           rdqvalid_o[p] <= 1'b0;
+
+        rdqvalid_o[rdcmd_queue[1].port] <= rdcmd_queue_cnt != 1'h1;
     end
 
-    
 
   /*Transfer Counter
    */
