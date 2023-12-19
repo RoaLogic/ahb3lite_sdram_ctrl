@@ -126,7 +126,7 @@
 module mesochronous_synchronizer
 #(
   parameter int DATA_SIZE       = 32,
-  parameter int REGISTERED_OUTPUT = "NO"
+  parameter     REGISTERED_OUTPUT = "NO"
 )
 (
   input  logic                  wrrst_ni,
