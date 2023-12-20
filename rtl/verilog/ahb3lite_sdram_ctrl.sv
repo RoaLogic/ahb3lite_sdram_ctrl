@@ -87,16 +87,18 @@ module ahb3lite_sdram_ctrl
   import ahb3lite_pkg::*;
 `endif
 #(
-  parameter int INIT_DLY_CNT      = 2500,  //in PCLK cycles
-  parameter int WRITEBUFFER_SIZE  = 8,    //SDRAM max burst = 8
-  
   parameter int AHB_PORTS         = 2,
   parameter int AHB_CTRL_PORT     = 0,
   parameter int HADDR_SIZE        = 32,
   parameter int HDATA_SIZE        = 32,
 
   parameter int SDRAM_DQ_SIZE     = 16,    //valid options: 16, 32, 64, 128
-  parameter int SDRAM_ADDR_SIZE   = 13
+  parameter int SDRAM_ADDR_SIZE   = 13,
+
+  parameter int INIT_DLY_CNT      = 2500,  //in PCLK cycles
+  parameter int WRITEBUFFER_SIZE  = 8 * SDRAM_DQ_SIZE,    //SDRAM max burst = 8
+
+  parameter     TECHNOLOGY        = "ALTERA"
 )
 (
   //APB Control/Status Interface
@@ -157,7 +159,6 @@ module ahb3lite_sdram_ctrl
 `endif
 
   localparam int SDRAM_BA_SIZE = 2;
-  localparam int DSIZE         = WRITEBUFFER_SIZE * HDATA_SIZE;
   localparam int MAX_RSIZE     = 13;
   localparam int MAX_CSIZE     = 11;
 
@@ -171,37 +172,37 @@ module ahb3lite_sdram_ctrl
   csr_t ahb_csr;
 
   //SDRAM read clock domain
-  logic sdram_rdclk_rst_n;
-  csr_t sdram_rdclk_csr;
+  logic                           sdram_rdclk_rst_n;
+  csr_t                           sdram_rdclk_csr;
 
-  logic                       wbr       [AHB_PORTS];
+  logic                           wbr       [AHB_PORTS];
 
-  logic                       rdreq     [AHB_PORTS];
-  logic                       rdrdy     [AHB_PORTS];
-  logic [HADDR_SIZE     -1:0] rdadr     [AHB_PORTS];
-  logic [SDRAM_BA_SIZE  -1:0] rdba      [AHB_PORTS];
-  logic [MAX_RSIZE      -1:0] rdrow     [AHB_PORTS];
-  logic [MAX_CSIZE      -1:0] rdcol     [AHB_PORTS];
-  logic [                7:0] rdsize    [AHB_PORTS];
-  logic [HDATA_SIZE     -1:0] rdq       [AHB_PORTS];
-  logic                       rdqvalid  [AHB_PORTS];
+  logic                           rdreq     [AHB_PORTS];
+  logic                           rdrdy     [AHB_PORTS];
+  logic [HADDR_SIZE         -1:0] rdadr     [AHB_PORTS];
+  logic [SDRAM_BA_SIZE      -1:0] rdba      [AHB_PORTS];
+  logic [MAX_RSIZE          -1:0] rdrow     [AHB_PORTS];
+  logic [MAX_CSIZE          -1:0] rdcol     [AHB_PORTS];
+  logic [                    7:0] rdsize    [AHB_PORTS];
+  logic [HDATA_SIZE         -1:0] rdq       [AHB_PORTS];
+  logic                           rdqvalid  [AHB_PORTS];
 
-  logic                       wrreq     [AHB_PORTS];
-  logic                       wrrdy     [AHB_PORTS];
-  logic [SDRAM_BA_SIZE  -1:0] wrba      [AHB_PORTS];
-  logic [MAX_RSIZE      -1:0] wrrow     [AHB_PORTS];
-  logic [MAX_CSIZE      -1:0] wrcol     [AHB_PORTS];
-  logic [HSIZE_SIZE     -1:0] wrsize    [AHB_PORTS];
-  logic [DSIZE/8        -1:0] wrbe      [AHB_PORTS];
-  logic [DSIZE          -1:0] wrd       [AHB_PORTS];
+  logic                           wrreq     [AHB_PORTS];
+  logic                           wrrdy     [AHB_PORTS];
+  logic [SDRAM_BA_SIZE      -1:0] wrba      [AHB_PORTS];
+  logic [MAX_RSIZE          -1:0] wrrow     [AHB_PORTS];
+  logic [MAX_CSIZE          -1:0] wrcol     [AHB_PORTS];
+  logic [HSIZE_SIZE         -1:0] wrsize    [AHB_PORTS];
+  logic [WRITEBUFFER_SIZE/8 -1:0] wrbe      [AHB_PORTS];
+  logic [WRITEBUFFER_SIZE   -1:0] wrd       [AHB_PORTS];
 
-  sdram_cmds_t                sdram_cmd;
-  logic [SDRAM_BA_SIZE  -1:0] sdram_ba;
-  logic [SDRAM_ADDR_SIZE-1:0] sdram_addr;
-  logic [SDRAM_DQ_SIZE  -1:0] sdram_d;
-  logic [SDRAM_DQ_SIZE  -1:0] sdram_q;
-  logic                       sdram_dqoe;
-  logic [SDRAM_DQ_SIZE/8-1:0] sdram_dm;
+  sdram_cmds_t                    sdram_cmd;
+  logic [SDRAM_BA_SIZE      -1:0] sdram_ba;
+  logic [SDRAM_ADDR_SIZE    -1:0] sdram_addr;
+  logic [SDRAM_DQ_SIZE      -1:0] sdram_d;
+  logic [SDRAM_DQ_SIZE      -1:0] sdram_q;
+  logic                           sdram_dqoe;
+  logic [SDRAM_DQ_SIZE/8    -1:0] sdram_dm;
 
 
   //////////////////////////////////////////////////////////////////
@@ -249,7 +250,8 @@ generate
         .SDRAM_DQ_SIZE    ( SDRAM_DQ_SIZE      ),
         .SDRAM_BA_SIZE    ( SDRAM_BA_SIZE      ),
         .MAX_CSIZE        ( MAX_CSIZE          ),
-        .MAX_RSIZE        ( MAX_RSIZE          ))
+        .MAX_RSIZE        ( MAX_RSIZE          ),
+        .TECHNOLOGY       ( TECHNOLOGY         ))
       ahb_if (
         .csr_i            ( ahb_csr            ),
       
@@ -299,47 +301,47 @@ endgenerate
   /* Instantiate SDRAM Controller block
    */
   sdram_cmd_scheduler #(
-    .PORTS           ( AHB_PORTS       ),
-    .CTRL_PORT       ( AHB_CTRL_PORT   ),
-    .ADDR_SIZE       ( HADDR_SIZE      ),
-    .WDATA_SIZE      ( HDATA_SIZE * WRITEBUFFER_SIZE ),
+    .PORTS           ( AHB_PORTS        ),
+    .CTRL_PORT       ( AHB_CTRL_PORT    ),
+    .ADDR_SIZE       ( HADDR_SIZE       ),
+    .WDATA_SIZE      ( WRITEBUFFER_SIZE ),
 
-    .SDRAM_ADDR_SIZE ( SDRAM_ADDR_SIZE ),
-    .SDRAM_BA_SIZE   ( SDRAM_BA_SIZE   ),
-    .SDRAM_DQ_SIZE   ( SDRAM_DQ_SIZE   ))
+    .SDRAM_ADDR_SIZE ( SDRAM_ADDR_SIZE  ),
+    .SDRAM_BA_SIZE   ( SDRAM_BA_SIZE    ),
+    .SDRAM_DQ_SIZE   ( SDRAM_DQ_SIZE    ))
   cmd_scheduler (
-    .rst_ni          ( HRESETn         ),
-    .clk_i           ( HCLK            ),
+    .rst_ni          ( HRESETn          ),
+    .clk_i           ( HCLK             ),
 
-    .wbr_i           ( wbr             ),
-    .rdreq_i         ( rdreq           ),
-    .rdrdy_o         ( rdrdy           ),
-    .rdadr_i         ( rdadr           ),
-    .rdba_i          ( rdba            ),
-    .rdrow_i         ( rdrow           ),
-    .rdcol_i         ( rdcol           ),
-    .rdsize_i        ( rdsize          ),
-    .rdq_o           ( rdq             ),
-    .rdqvalid_o      ( rdqvalid        ),
+    .wbr_i           ( wbr              ),
+    .rdreq_i         ( rdreq            ),
+    .rdrdy_o         ( rdrdy            ),
+    .rdadr_i         ( rdadr            ),
+    .rdba_i          ( rdba             ),
+    .rdrow_i         ( rdrow            ),
+    .rdcol_i         ( rdcol            ),
+    .rdsize_i        ( rdsize           ),
+    .rdq_o           ( rdq              ),
+    .rdqvalid_o      ( rdqvalid         ),
 
-    .wrreq_i         ( wrreq           ),
-    .wrrdy_o         ( wrrdy           ),
-    .wrba_i          ( wrba            ),
-    .wrrow_i         ( wrrow           ),
-    .wrcol_i         ( wrcol           ),
-    .wrsize_i        ( wrsize          ),
-    .wrbe_i          ( wrbe            ),
-    .wrd_i           ( wrd             ),
+    .wrreq_i         ( wrreq            ),
+    .wrrdy_o         ( wrrdy            ),
+    .wrba_i          ( wrba             ),
+    .wrrow_i         ( wrrow            ),
+    .wrcol_i         ( wrcol            ),
+    .wrsize_i        ( wrsize           ),
+    .wrbe_i          ( wrbe             ),
+    .wrd_i           ( wrd              ),
 
-    .csr_i           ( ahb_csr         ),
+    .csr_i           ( ahb_csr          ),
 
-    .sdram_cmd_o     ( sdram_cmd       ),
-    .sdram_ba_o      ( sdram_ba        ),
-    .sdram_addr_o    ( sdram_addr      ),
-    .sdram_dq_i      ( sdram_q         ),
-    .sdram_dq_o      ( sdram_d         ),
-    .sdram_dqoe_o    ( sdram_dqoe      ),
-    .sdram_dm_o      ( sdram_dm        ));
+    .sdram_cmd_o     ( sdram_cmd        ),
+    .sdram_ba_o      ( sdram_ba         ),
+    .sdram_addr_o    ( sdram_addr       ),
+    .sdram_dq_i      ( sdram_q          ),
+    .sdram_dq_o      ( sdram_d          ),
+    .sdram_dqoe_o    ( sdram_dqoe       ),
+    .sdram_dm_o      ( sdram_dm         ));
 
 
   /* Instantiate SDRAM PHY
