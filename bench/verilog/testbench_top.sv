@@ -44,9 +44,6 @@ import ahb3lite_pkg::*;
   parameter int  HCLK_PERIOD      = 10; //10ns = 100MHz
   parameter int  PCLK_PERIOD      = 40; //40ns =  25MHz
 
-  parameter int  INIT_DLY_CNT     = 100e-6/(PCLK_PERIOD * 1e-9);  //100us in PCLK cycles
-  parameter int  WRITEBUFFER_SIZE = 8;
-
   parameter int  AHB_PORTS        = 1;
   parameter int  AHB_CTRL_PORT    = 0;
   parameter int  HADDR_SIZE       = 20;
@@ -57,8 +54,12 @@ import ahb3lite_pkg::*;
   
   parameter int  SDRAM_DQ_SIZE    = 32;
   parameter int  SDRAM_ADDR_SIZE  = 11;
-  parameter int  SDRAM_AP         = 1;
+  parameter int  SDRAM_AP         = 0;
   parameter int  SDRAM_BURST_SIZE = 8;  //1,2,4,8
+
+  parameter int  INIT_DLY_CNT     = 100e-6/(PCLK_PERIOD * 1e-9);  //100us in PCLK cycles
+  parameter int  WRITEBUFFER_SIZE = 8 * HDATA_SIZE;
+  parameter      TECHNOLOGY       = "GENERIC";
 
   /* PCB trace
    */
@@ -479,8 +480,8 @@ generate
   for (ahbport=0; ahbport < AHB_PORTS; ahbport++)
   begin: ahb_if
       ahb3lite_master_bfm #(
-        .HADDR_SIZE ( HADDR_SIZE         ),
-        .HDATA_SIZE ( HDATA_SIZE         ))
+        .HADDR_SIZE        ( HADDR_SIZE         ),
+        .HDATA_SIZE        ( HDATA_SIZE         ))
       ahb_bfm (
         .HRESETn    ( HRESETn            ),
         .HCLK       ( HCLK               ),
@@ -512,7 +513,9 @@ endgenerate
     .HDATA_SIZE       ( HDATA_SIZE       ),
 
     .SDRAM_DQ_SIZE    ( SDRAM_DQ_SIZE    ),
-    .SDRAM_ADDR_SIZE  ( SDRAM_ADDR_SIZE  ))
+    .SDRAM_ADDR_SIZE  ( SDRAM_ADDR_SIZE  ),
+
+    .TECHNOLOGY       ( TECHNOLOGY       ))
   dut (
     //APB Control/Status Interface
     .PRESETn          ( PRESETn          ),
