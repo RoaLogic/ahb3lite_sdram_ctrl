@@ -46,7 +46,6 @@
 //  PARAM NAME        RANGE    DESCRIPTION              DEFAULT UNITS
 //  HADDR_SIZE        1+       AHB address width        32      bits  
 //  HDATA_SIZE        1+       AHB data width           32      bits
-//  WRITEBUFFER_SIZE  1+       Writebuffer size         8
 // ------------------------------------------------------------------
 // REUSE ISSUES 
 //   Reset Strategy      : external asynchronous active low; HRESETn
@@ -78,14 +77,14 @@ module sdram_ahb_if
 #(
   parameter int HADDR_SIZE        = 32,
   parameter int HDATA_SIZE        = 32,
-  parameter int WRITEBUFFER_SIZE  = 8,
 
   parameter int SDRAM_DQ_SIZE     = 16,
   parameter int SDRAM_BA_SIZE     = 2,
   parameter int MAX_RSIZE         = 13,
   parameter int MAX_CSIZE         = 11,
 
-  parameter int WRITEBUFFER_DSIZE = WRITEBUFFER_SIZE * HDATA_SIZE
+  parameter int WRITEBUFFER_SIZE  = 8 * SDRAM_DQ_SIZE,
+  parameter     TECHNOLOGY        = "GENERIC"
 )
 (
   input csr_t                            csr_i,
@@ -127,8 +126,8 @@ module sdram_ahb_if
   output logic [MAX_RSIZE          -1:0] wrrow_o,
   output logic [MAX_CSIZE          -1:0] wrcol_o,
   output logic [                    2:0] wrsize_o,
-  output logic [WRITEBUFFER_DSIZE/8-1:0] wrbe_o,
-  output logic [WRITEBUFFER_DSIZE  -1:0] wrd_o
+  output logic [WRITEBUFFER_SIZE/8 -1:0] wrbe_o,
+  output logic [WRITEBUFFER_SIZE   -1:0] wrd_o
 );
 
 `ifdef ALTERA_RESERVED_QIS
@@ -145,16 +144,17 @@ module sdram_ahb_if
   endfunction : max
 
 
-  localparam HDATA_BYTES     = HDATA_SIZE/8;
-  localparam BUFFER_BYTES    = WRITEBUFFER_DSIZE/8;
-  localparam BUFFER_ADR_SIZE = $clog2(BUFFER_BYTES);
-  localparam BUFFER_TAG_SIZE = HADDR_SIZE - BUFFER_ADR_SIZE;
+  localparam HDATA_BYTES       = HDATA_SIZE/8;
+  localparam WRBUFFER_BYTES    = WRITEBUFFER_SIZE/8;
+  localparam WRBUFFER_ADR_BITS = $clog2(WRBUFFER_BYTES);
+  localparam WRBUFFER_IDX_BITS = $clog2(WRBUFFER_BYTES / HDATA_BYTES);
+  localparam WRBUFFER_TAG_SIZE = HADDR_SIZE - WRBUFFER_ADR_BITS;
 
-  localparam HSIZE_MAX       = $clog2(HDATA_BYTES);
-  localparam HBURST_MAX      = 16;
+  localparam HSIZE_MAX         = $clog2(HDATA_BYTES);
+  localparam HBURST_MAX        = 16;
 
   //ReadBuffer-size = max(SDRAM_BURST_SIZE_MAX * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE)
-  localparam RDBUFFER_SIZE  = max(8 * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE);
+  localparam RDBUFFER_SIZE     = max(8 * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE);
 
 
   //////////////////////////////////////////////////////////////////
@@ -295,16 +295,16 @@ module sdram_ahb_if
   logic                         write,
                                 read;
   logic [HDATA_BYTES      -1:0] be;
-  logic [BUFFER_TAG_SIZE  -1:0] tag,
+  logic [WRBUFFER_TAG_SIZE-1:0] tag,
                                 write_tag;
-  logic [BUFFER_ADR_SIZE  -1:0] idx;
+  logic [WRBUFFER_IDX_BITS-1:0] wr_idx;
 
   logic                         writebuffer_flush;
   logic [                 15:0] writebuffer_timer;
   logic                         writebuffer_timer_expired;
-  logic [WRITEBUFFER_DSIZE-1:0] writebuffer      [2];
-  logic [BUFFER_BYTES     -1:0] writebuffer_be   [2];
-  logic [BUFFER_TAG_SIZE  -1:0] writebuffer_tag  [2];
+  logic [WRITEBUFFER_SIZE -1:0] writebuffer;
+  logic [WRBUFFER_BYTES   -1:0] writebuffer_be   [2];
+  logic [WRBUFFER_TAG_SIZE-1:0] writebuffer_tag  [2];
   logic                         writebuffer_dirty[2];
 
   logic                         pingpong,
@@ -312,6 +312,11 @@ module sdram_ahb_if
                                 nxt_pingpong;
 
   //Read
+  logic                         rdfifo_rreq;
+  logic                         rdfifo_empty;
+  logic [SDRAM_DQ_SIZE    -1:0] rdfifo_q;
+
+
   logic [RDBUFFER_SIZE           -1:0] rdbuffer;
   logic [$clog2(RDBUFFER_SIZE/16)-1:0] rdbuffer_idx;
 
@@ -334,8 +339,8 @@ module sdram_ahb_if
   logic                           wrreq;
   logic [HADDR_SIZE         -1:0] wradr;
   logic [                    2:0] wrsize;
-  logic [WRITEBUFFER_DSIZE/8-1:0] wrbe;
-  logic [WRITEBUFFER_DSIZE  -1:0] wrd;
+  logic [WRITEBUFFER_SIZE /8-1:0] wrbe;
+  logic [WRITEBUFFER_SIZE   -1:0] wrd;
 
 
   //////////////////////////////////////////////////////////////////
@@ -345,9 +350,9 @@ module sdram_ahb_if
   task flush;
       input                         dirty;
       input                         wrrdy;
-      input [BUFFER_TAG_SIZE  -1:0] tag;
-      input [BUFFER_BYTES     -1:0] be;
-      input [WRITEBUFFER_DSIZE-1:0] writebuffer;
+      input [WRBUFFER_TAG_SIZE-1:0] tag;
+      input [WRBUFFER_BYTES   -1:0] be;
+      input [WRITEBUFFER_SIZE -1:0] writebuffer;
 
       if (!dirty || wrrdy) //other buffer clean?
       begin
@@ -366,9 +371,9 @@ module sdram_ahb_if
 
 
   task go_flush;
-    input [BUFFER_TAG_SIZE  -1:0] tag;
-    input [BUFFER_BYTES     -1:0] be;
-    input [WRITEBUFFER_DSIZE-1:0] writebuffer;
+    input [WRBUFFER_TAG_SIZE-1:0] tag;
+    input [WRBUFFER_BYTES   -1:0] be;
+    input [WRITEBUFFER_SIZE -1:0] writebuffer;
 
     //flush
     wr_nxt_state    = wr_idle;
@@ -376,8 +381,8 @@ module sdram_ahb_if
     pingpong_toggle = 1'b1;
 
     wrreq     = 1'b1;
-    wradr     = {tag, {BUFFER_ADR_SIZE{1'b0}}};
-    wrsize    = $clog2(BUFFER_BYTES) -1'h1;
+    wradr     = {tag, {WRBUFFER_ADR_BITS{1'b0}}};
+    wrsize    = WRBUFFER_ADR_BITS -1'h1;
     wrbe      = be;
     wrd       = writebuffer;
   endtask : go_flush
@@ -415,10 +420,10 @@ module sdram_ahb_if
 
 
   //TAG
-  assign tag = HADDR[HADDR_SIZE -1 -: BUFFER_TAG_SIZE];
+  assign tag = HADDR[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
 
   always @(posedge HCLK, negedge HRESETn)
-    if      (!HRESETn) write_tag <= {BUFFER_TAG_SIZE{1'b0}};
+    if      (!HRESETn) write_tag <= {WRBUFFER_TAG_SIZE{1'b0}};
     else if ( HREADY ) write_tag <= tag;
 
   always @(posedge HCLK, negedge HRESETn)
@@ -427,20 +432,37 @@ module sdram_ahb_if
         writebuffer_tag[0] <= {$bits(writebuffer_tag[0]){1'b0}};
         writebuffer_tag[1] <= {$bits(writebuffer_tag[1]){1'b0}};
     end
-    else if ( HREADY && hreadyout_wr_reg) writebuffer_tag[pingpong] <= write_tag;
+    else if ( HREADY && write && hreadyout_wr_reg) writebuffer_tag[pingpong] <= write_tag;
 
 
   //IDX
   always @(posedge HCLK)
     if (HREADY)
-      idx <= HADDR[BUFFER_ADR_SIZE -1:0] & ~{$clog2(HDATA_SIZE/8){1'b1}}; //do not double count address + byte-enables
+      wr_idx <= HADDR[WRBUFFER_ADR_BITS -1 -: WRBUFFER_IDX_BITS];
 
 
   //Writebuffer
-  always @(posedge HCLK)
-    if (write)
-      for (int i=0; i < HDATA_BYTES; i++)
-        if (be[i] && hreadyout_wr_reg) writebuffer[pingpong][(idx + i)*8 +: 8] <= HWDATA[i*8 +: 8];
+  rl_ram_1r1w #(
+    .WRITE_ABITS   ( WRBUFFER_IDX_BITS +1),
+    .WRITE_DBITS   ( HDATA_SIZE          ),
+    .READ_ABITS    ( 1                   ),
+    .READ_DBITS    ( WRITEBUFFER_SIZE    ),
+    .TECHNOLOGY    ( TECHNOLOGY          ),
+    .RW_CONTENTION ( "DONT_CARE"         ))
+  writebuffer_inst (
+    .rst_ni  ( HRESETn            ),
+    .clk_i   ( HCLK               ),
+
+    //Write side
+    .waddr_i ( {pingpong, wr_idx} ),
+    .din_i   ( HWDATA             ),
+    .we_i    ( write              ),
+    .be_i    ( be                 ),
+
+    //Read side
+    .raddr_i (~pingpong           ),
+    .re_i    ( 1'b0               ),
+    .dout_o  ( wrd_o              ));
 
 
   //Byte enables
@@ -453,10 +475,10 @@ module sdram_ahb_if
     else
     begin
         if (pingpong_toggle)
-          writebuffer_be[nxt_pingpong] <= {BUFFER_BYTES{1'b0}};
+          writebuffer_be[nxt_pingpong] <= {WRBUFFER_BYTES{1'b0}};
 
         if (write && hreadyout_wr_reg)
-          writebuffer_be[pingpong][idx +: HDATA_BYTES] <= writebuffer_be[pingpong][idx +: HDATA_BYTES] | be;
+          writebuffer_be[pingpong][wr_idx*HDATA_BYTES +: HDATA_BYTES] <= writebuffer_be[pingpong][wr_idx*HDATA_BYTES +: HDATA_BYTES] | be;
     end
 
 
@@ -517,20 +539,20 @@ module sdram_ahb_if
                              wrrdy_i,
                              writebuffer_tag  [ pingpong],
                              {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
-                             {HWDATA, writebuffer    [pingpong][0 +: $bits(writebuffer   [0]) - HDATA_SIZE]});
+                             {HWDATA, writebuffer              [0 +: $bits(writebuffer      ) - HDATA_SIZE]});
                  end
                  else if (writebuffer_timer_expired) //timer expired
                    flush(writebuffer_dirty[~pingpong],
                          wrrdy_i,
                          writebuffer_tag  [ pingpong],
                          {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
-                         {HWDATA, writebuffer    [pingpong][0 +: $bits(writebuffer   [0]) - HDATA_SIZE]});
+                         {HWDATA, writebuffer              [0 +: $bits(writebuffer      ) - HDATA_SIZE]});
 
         //wait for pending wrreq to complete
         wr_wait: if (wrrdy_i)
                   go_flush(writebuffer_tag[pingpong],
                            writebuffer_be [pingpong],
-                           writebuffer    [pingpong]);
+                           writebuffer              );
       endcase
     end
 
@@ -539,22 +561,39 @@ module sdram_ahb_if
   /* Read
    */
 
-  //ReadBuffer
-  always @(posedge HCLK, negedge HRESETn)
-    if (!HRESETn) rdbuffer_idx <= {$bits(rdbuffer_idx){1'b0}};
-    else
-    case (rdqvalid_i)
-      1'b0: ;
-      1'b1: rdbuffer_idx <= rdbuffer_idx + 1'h1;
-    endcase
+  //ReadFIFO
+  rl_scfifo #(
+    .DEPTH             ( 8             ), //SDRAM max burst size = 8
+    .DATA_SIZE         ( SDRAM_DQ_SIZE ),
+    .REGISTERED_OUTPUT ( "NO"          ))
+  rdfifo (
+    .rst_ni  ( HRESETn    ),
+    .clk_i   ( HCLK       ),
+    .clr_i   ( 1'b0       ), //use clr_i to remove extra read data?
 
-  //ReadBuffer
-  always @(posedge HCLK)
-    case (rdqvalid_i)
-      1'b0: ;
-      1'b1: rdbuffer[rdbuffer_idx * (16 << csr_i.ctrl.dqsize) +: SDRAM_DQ_SIZE] <= rdq_i;
-    endcase
+    .d_i     ( rdq_i      ),
+    .wrena_i ( rdqvalid_i ),
 
+    .rdena_i ( 1'b1   ), //TODO
+    .q_o     ( rdfifo_q     ),
+
+    .empty_o ( rdfifo_empty ),
+    .full_o  (),
+    .usedw_o ());
+
+
+/* Generate HRDATA
+ * 1. HSIZE <= csr.ctrl.dsize
+ *    grab fifo.q_o[idx] and place them in HRDATA
+ *    set rdhreadyout = 1'b1
+ *    if (idx < (SDRAM_DQ_SIZE-HSIZE)) idx++
+ *    else idx=0, read next fifo entry; fifo.rdena_i=1
+ * 2. HSIZE >  csr.ctrl.dsize
+ *    grab fifo.q_o and place in HRDATA[idx]
+ *    fifo.rdena_i=1
+ *    if (idx < (HDATA_SIZE-HSIZE)) idx++
+ *    else idx=0, rdhreadyout = 1'b1
+ */
 
   //Read FSM
   always_comb
@@ -581,7 +620,7 @@ module sdram_ahb_if
                        rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
                    end
 
-        //wait for SDRAM to fill buffer
+        //wait for scheduler to reply or fill buffer
         rd_read: if (rdrdy_i)
                  begin
                      //wait for SDRAM to fill buffer
@@ -590,6 +629,15 @@ module sdram_ahb_if
 		     rd_nxt_state = rd_idle;
                      hreadyout_rd = 1'b1;
                      rdreq  = 1'b0;
+                 end
+                 else if (!rdfifo_empty)
+                 begin
+                     if ( (1 << HSIZE) <= (2 << csr_i.ctrl.dqsize) )
+                     begin
+                     end
+                     else
+                     begin
+                     end
                  end
         endcase
     end
@@ -610,17 +658,17 @@ module sdram_ahb_if
 
         pingpong         <= 1'b0;
 
-        wbr_o      <= 1'b0;
+        wbr_o            <= 1'b0;
 
-        wrreq_o    <= 1'b0;
-        wradr_o    <= {$bits(wradr_o ){1'bx}};
-        wrsize_o   <= {$bits(wrsize_o){1'bx}};
-        wrbe_o     <= {$bits(wrbe_o  ){1'bx}};
-        wrd_o      <= {$bits(wrd_o   ){1'bx}};
+        wrreq_o          <= 1'b0;
+        wradr_o          <= {$bits(wradr_o ){1'bx}};
+        wrsize_o         <= {$bits(wrsize_o){1'bx}};
+        wrbe_o           <= {$bits(wrbe_o  ){1'bx}};
+//        wrd_o            <= {$bits(wrd_o   ){1'bx}};
 
-        rdreq_o    <= 1'b0;
-        rdadr_o    <= {$bits(rdadr_o ){1'bx}};
-        rdsize_o   <= {$bits(rdsize_o){1'bx}};
+        rdreq_o          <= 1'b0;
+        rdadr_o          <= {$bits(rdadr_o ){1'bx}};
+        rdsize_o         <= {$bits(rdsize_o){1'bx}};
     end
     else
     begin
@@ -638,7 +686,7 @@ module sdram_ahb_if
         wradr_o    <= wradr;
         wrsize_o   <= wrsize;
         wrbe_o     <= wrbe;
-        wrd_o      <= wrd;
+//        wrd_o      <= wrd;
 
         rdreq_o    <= rdreq;
         rdadr_o    <= rdadr;
