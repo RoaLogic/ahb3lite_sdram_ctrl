@@ -302,7 +302,7 @@ module sdram_ahb_if
   logic                         writebuffer_flush;
   logic [                 15:0] writebuffer_timer;
   logic                         writebuffer_timer_expired;
-  logic [WRITEBUFFER_SIZE -1:0] writebuffer;
+  logic                         writebuffer_we;
   logic [WRBUFFER_BYTES   -1:0] writebuffer_be   [2];
   logic [WRBUFFER_TAG_SIZE-1:0] writebuffer_tag  [2];
   logic                         writebuffer_dirty[2];
@@ -336,11 +336,10 @@ module sdram_ahb_if
   logic [HADDR_SIZE         -1:0] rdadr;
   logic [                    7:0] rdsize;
 
-  logic                           wrreq;
+  logic                           wrreq, wrreq_dly;
   logic [HADDR_SIZE         -1:0] wradr;
   logic [                    2:0] wrsize;
   logic [WRITEBUFFER_SIZE /8-1:0] wrbe;
-  logic [WRITEBUFFER_SIZE   -1:0] wrd;
 
 
   //////////////////////////////////////////////////////////////////
@@ -352,12 +351,11 @@ module sdram_ahb_if
       input                         wrrdy;
       input [WRBUFFER_TAG_SIZE-1:0] tag;
       input [WRBUFFER_BYTES   -1:0] be;
-      input [WRITEBUFFER_SIZE -1:0] writebuffer;
 
       if (!dirty || wrrdy) //other buffer clean?
       begin
           //flush
-          go_flush(tag, be, writebuffer);
+          go_flush(tag, be);
       end
       else //other buffer not clean; wait for it to be processed
       begin
@@ -373,7 +371,6 @@ module sdram_ahb_if
   task go_flush;
     input [WRBUFFER_TAG_SIZE-1:0] tag;
     input [WRBUFFER_BYTES   -1:0] be;
-    input [WRITEBUFFER_SIZE -1:0] writebuffer;
 
     //flush
     wr_nxt_state    = wr_idle;
@@ -384,7 +381,6 @@ module sdram_ahb_if
     wradr     = {tag, {WRBUFFER_ADR_BITS{1'b0}}};
     wrsize    = WRBUFFER_ADR_BITS -1'h1;
     wrbe      = be;
-    wrd       = writebuffer;
   endtask : go_flush
 
 
@@ -409,6 +405,8 @@ module sdram_ahb_if
   always @(posedge HCLK)
     if (HREADY) write <= ahb_write;
 
+  assign writebuffer_we = write & hreadyout_wr_reg;
+
 
   //decode Byte-Enables
   always @(posedge HCLK)
@@ -432,7 +430,7 @@ module sdram_ahb_if
         writebuffer_tag[0] <= {$bits(writebuffer_tag[0]){1'b0}};
         writebuffer_tag[1] <= {$bits(writebuffer_tag[1]){1'b0}};
     end
-    else if ( HREADY && write && hreadyout_wr_reg) writebuffer_tag[pingpong] <= write_tag;
+    else if ( HREADY && writebuffer_we) writebuffer_tag[pingpong] <= write_tag;
 
 
   //IDX
@@ -456,7 +454,7 @@ module sdram_ahb_if
     //Write side
     .waddr_i ( {pingpong, wr_idx} ),
     .din_i   ( HWDATA             ),
-    .we_i    ( write              ),
+    .we_i    ( writebuffer_we     ),
     .be_i    ( be                 ),
 
     //Read side
@@ -477,7 +475,7 @@ module sdram_ahb_if
         if (pingpong_toggle)
           writebuffer_be[nxt_pingpong] <= {WRBUFFER_BYTES{1'b0}};
 
-        if (write && hreadyout_wr_reg)
+        if (writebuffer_we)
           writebuffer_be[pingpong][wr_idx*HDATA_BYTES +: HDATA_BYTES] <= writebuffer_be[pingpong][wr_idx*HDATA_BYTES +: HDATA_BYTES] | be;
     end
 
@@ -491,8 +489,8 @@ module sdram_ahb_if
     end
     else
     begin
-        if ( write   && hreadyout_wr_reg) writebuffer_dirty[ pingpong] <= 1'b1;
-        if ( wrreq_o && wrrdy_i         ) writebuffer_dirty[~pingpong] <= 1'b0;
+        if ( writebuffer_we     ) writebuffer_dirty[ pingpong] <= 1'b1;
+        if ( wrreq_o && wrrdy_i ) writebuffer_dirty[~pingpong] <= 1'b0;
     end
 
 
@@ -522,11 +520,10 @@ module sdram_ahb_if
       wr_nxt_state   = wr_state;
       hreadyout_wr   = hreadyout_wr_reg;
 
-      wrreq    = wrreq_o & ~wrrdy_i;
+      wrreq    = (wrreq_o | wrreq_dly) & ~wrrdy_i;
       wradr    = wradr_o;
       wrsize   = wrsize_o;
       wrbe     = wrbe_o;
-      wrd      = wrd_o;
 
       pingpong_toggle = 1'b0;
 
@@ -538,21 +535,18 @@ module sdram_ahb_if
                        flush(writebuffer_dirty[~pingpong],
                              wrrdy_i,
                              writebuffer_tag  [ pingpong],
-                             {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
-                             {HWDATA, writebuffer              [0 +: $bits(writebuffer      ) - HDATA_SIZE]});
+                             {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]});
                  end
                  else if (writebuffer_timer_expired) //timer expired
                    flush(writebuffer_dirty[~pingpong],
                          wrrdy_i,
                          writebuffer_tag  [ pingpong],
-                         {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]},
-                         {HWDATA, writebuffer              [0 +: $bits(writebuffer      ) - HDATA_SIZE]});
+                         {be,     writebuffer_be [pingpong][0 +: $bits(writebuffer_be[0]) - $bits(be) ]});
 
         //wait for pending wrreq to complete
         wr_wait: if (wrrdy_i)
                   go_flush(writebuffer_tag[pingpong],
-                           writebuffer_be [pingpong],
-                           writebuffer              );
+                           writebuffer_be [pingpong]);
       endcase
     end
 
@@ -660,11 +654,11 @@ module sdram_ahb_if
 
         wbr_o            <= 1'b0;
 
+        wrreq_dly        <= 1'b0;
         wrreq_o          <= 1'b0;
         wradr_o          <= {$bits(wradr_o ){1'bx}};
         wrsize_o         <= {$bits(wrsize_o){1'bx}};
         wrbe_o           <= {$bits(wrbe_o  ){1'bx}};
-//        wrd_o            <= {$bits(wrd_o   ){1'bx}};
 
         rdreq_o          <= 1'b0;
         rdadr_o          <= {$bits(rdadr_o ){1'bx}};
@@ -682,11 +676,12 @@ module sdram_ahb_if
 
         wbr_o      <= wbr;
 
-        wrreq_o    <= wrreq;
+        wrreq_dly  <= wrreq;                          //extra delay for wrreq, because wrd_o is 1 cycle late
+        wrreq_o    <= wrreq_dly & (~wrrdy_i | wrreq); //Allow continuous wrreq only when wrreq set in wr_wait state
+                                                      //wrd_o is at least 1 cycle stable due to wr_wait
         wradr_o    <= wradr;
         wrsize_o   <= wrsize;
         wrbe_o     <= wrbe;
-//        wrd_o      <= wrd;
 
         rdreq_o    <= rdreq;
         rdadr_o    <= rdadr;
