@@ -133,6 +133,11 @@ import sdram_ctrl_pkg::*;
     max = a > b ? a : b;
   endfunction : max
 
+  function int min(input int a, input int b);
+    min = a < b ? a : b;
+  endfunction : min
+
+
   localparam int PORTS_BITS    = $clog2(PORTS) +1;
   localparam int BANKS         = 1 << SDRAM_BA_SIZE;
 
@@ -154,6 +159,7 @@ import sdram_ctrl_pkg::*;
   typedef struct packed {
     logic                  valid;
     logic [PORTS_BITS-1:0] port;
+    logic [           2:0] xfer_size;
   } rdcmd_t;
 
  
@@ -218,8 +224,10 @@ import sdram_ctrl_pkg::*;
   logic                       active_nxt_rd, active_rd,
                               active_nxt_wr, active_wr;
   logic [                2:0] burst_cnt;               //Number of transfers per WR/RD command
+  logic [                2:0] burst_cnt_int_val;
   logic                       burst_cnt_load;
   logic                       burst_cnt_done;
+  logic                       burst_terminate;         //read less than csr_i.ctrl.burst_size
   logic [                2:0] burst_cnt_rd2wr;         //Number of cycles when a WR can be issues afer a RD
   logic                       burst_cnt_rd2wr_done;
   logic [                5:0] burst_cnt_wr2rd;         //Number of cycles when a RD can be issues after a WR
@@ -332,6 +340,13 @@ import sdram_ctrl_pkg::*;
   endtask
 
 
+  task automatic cmd_terminate;
+    cmd_none_task();
+
+    sdram_nxt_cmd      = CMD_BST;
+  endtask
+
+
   task automatic cmd_wr_task;
     input [PORTS_BITS   -1:0] port;
     input [SDRAM_BA_SIZE-1:0] ba;
@@ -350,6 +365,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
     tRP_load       [ba] = go_ap;
+//Calculate tRP
 //    tRAS
 //and tWR cycle(s) after last valid data
 //or  interrupted by read or write (with or without auto precharge)
@@ -386,6 +402,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
     tRP_load       [ba] = go_ap;
+//Calculate tRP
 //    tRAS
 //and CAS Latency -1 cycles before last burst
 //or  interrupted by read or write (with or without auto precharge)
@@ -516,6 +533,8 @@ endgenerate
 
   /*Burst Counters
    */
+  assign burst_cnt_int_val = (1'h1 << csr_i.ctrl.burst_size) -1'h1;
+
   always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
     begin
@@ -524,8 +543,12 @@ endgenerate
     end
     else if (burst_cnt_load)
     begin
-        burst_cnt      <=  (1'h1 << csr_i.ctrl.burst_size) -1'h1;
+        burst_cnt      <=  burst_cnt_int_val;
         burst_cnt_done <= ~|csr_i.ctrl.burst_size;
+    end
+    else if (burst_terminate)
+    begin
+        burst_cnt_done <= 1'b1;
     end
     else if (!burst_cnt_done)
     begin
@@ -543,8 +566,12 @@ endgenerate
     end
    else if (burst_cnt_load && active_nxt_wr)
     begin
-        burst_cnt_wr2rd      <=  (1'h1 << csr_i.ctrl.burst_size) + csr_i.timing.cl -1'h1;
+        burst_cnt_wr2rd      <= burst_cnt_int_val - csr_i.timing.cl;
         burst_cnt_wr2rd_done <= csr_i.ctrl.burst_size < csr_i.timing.cl;
+    end
+    else if (burst_terminate)
+    begin
+        burst_cnt_wr2rd <= csr_i.timing.cl -1'h1;
     end
     else if (!burst_cnt_wr2rd_done)
     begin
@@ -562,8 +589,12 @@ endgenerate
     end
    else if (burst_cnt_load && active_nxt_rd)
     begin
-        burst_cnt_rd2wr      <=  (1'h1 << csr_i.ctrl.burst_size) - csr_i.timing.cl + csr_i.timing.btac -1'h1;
+        burst_cnt_rd2wr      <= burst_cnt_int_val + csr_i.timing.cl + csr_i.timing.btac;
         burst_cnt_rd2wr_done <= 1'b0;
+    end
+    else if (burst_terminate)
+    begin
+        burst_cnt_rd2wr <= csr_i.timing.cl + csr_i.timing.btac -1'h1;
     end
     else if (!burst_cnt_rd2wr_done)
     begin
@@ -585,7 +616,13 @@ endgenerate
           rdcmd_queue[r] <= rdcmd_queue[r+1];
 
         if (burst_cnt_load && active_nxt_rd)
-          rdcmd_queue[csr_i.timing.tRDV + csr_i.timing.cl] <= {1'b1, rdport};
+        begin
+            rdcmd_queue[csr_i.timing.tRDV + csr_i.timing.cl].valid     <= 1'b1;
+            rdcmd_queue[csr_i.timing.tRDV + csr_i.timing.cl].port      <= rdport;
+            rdcmd_queue[csr_i.timing.tRDV + csr_i.timing.cl].xfer_size <= xfer_cnt_ld
+                                                                            ? min(xfer_cnt_ld_val, burst_cnt_int_val)
+                                                                            : burst_cnt_int_val;
+        end
     end
 
   //Read Command Queue counters (rdqvalid)
@@ -600,7 +637,7 @@ endgenerate
     end
     else if (rdcmd_queue[1].valid)
     begin
-        rdcmd_queue_cnt      <= 1 << csr_i.ctrl.burst_size;
+        rdcmd_queue_cnt      <= rdcmd_queue[1].xfer_size +'h1;
         rdcmd_queue_cnt_done <= 1'b0;
 
         for (int p=0; p < $size(rdqvalid_o); p++)
@@ -646,8 +683,35 @@ endgenerate
         xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
     end
 
+    assign burst_terminate = xfer_cnt_done & ~burst_cnt_done;
 
-  /* Transfer Buffers (write)
+
+  /* RDRDY
+   */
+generate
+  for (port=0; port < PORTS; port++)
+  begin: gen_rdrdy
+      //rdrdy generation
+      always @(posedge clk_i, negedge rst_ni)
+        if (!rst_ni) rdrdy_o[port] <= 1'b0;
+        else
+        case (csr_i.ctrl.mode)
+          2'b00: //normal mode
+            case (rdrdy_o[port])
+              1'b0: if ( (port == rdport) && active_rd &&
+                         (xfer_cnt <= (1 << csr_i.ctrl.burst_size) +1'h1) ) //xfer_cnt_last_burst
+                      rdrdy_o[port] <= 1'b1;
+
+              1'b1: rdrdy_o[port] <= 1'b0;
+            endcase
+
+          default: rdrdy_o[port] <= rdrdy[port];
+        endcase
+  end
+endgenerate
+
+
+  /* WRRDY, Transfer Buffers (write)
    */
 generate
   for (port=0; port < PORTS; port++)
@@ -660,7 +724,7 @@ generate
           1'b0: if ((port == wrport) && active_wr && xfer_cnt_last_burst)
                   wrrdy_o[port] <= 1'b1;
 
-          1'b1: wrrdy_o    [port] <= 1'b0;
+          1'b1: wrrdy_o[port] <= 1'b0;
         endcase
   end
 endgenerate
@@ -753,12 +817,17 @@ endgenerate
                  /*This is in reverse priority order!
                   */
 
+                 //burst terminate
+                 if ( burst_terminate ) cmd_terminate();
+
+
                  //any refreshes to service?
                  if (|refreshes_pending && &tRP_done && tRC_done)
                  begin
                      if (bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
                      else                                     cmd_pre_all_task();
                  end
+
 
                  //any writes with activated banks pending?
                  //any reads with activated banks pending?
@@ -855,9 +924,6 @@ endgenerate
         active_port  <= {$bits(active_port){1'b0}};
         active_rd    <= 1'b0;
         active_wr    <= 1'b0;
-
-        for (int p=0; p < PORTS; p++)
-          rdrdy_o[p] <= 1'b0;
     end
     else
     begin
@@ -874,9 +940,6 @@ endgenerate
         active_port  <= active_nxt_port;
         active_rd    <= active_nxt_rd;
         active_wr    <= active_nxt_wr;
-
-        for (int p=0; p < PORTS; p++)
-          rdrdy_o[p] <= rdrdy[p];
     end
 
 
