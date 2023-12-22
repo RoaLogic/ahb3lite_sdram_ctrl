@@ -682,7 +682,7 @@ module sdram_ahb_if
   always_comb
   begin
       rd_nxt_state = rd_state;
-      hreadyout_rd = hreadyout_rd_reg;
+      hreadyout_rd = rdfifo_rreq_dly ? hreadyout_hrdata : hreadyout_rd_reg;
 
       wbr    = wbr_o & ~rdrdy_i;
       rdreq  = rdreq_o;
@@ -691,30 +691,23 @@ module sdram_ahb_if
 
       case (rd_state)
         //wait for action
-        rd_idle: if (HREADY)
-                   if (ahb_read)
-                   begin
-                       rd_nxt_state = rd_read;
-                       hreadyout_rd = 1'b0;  //insert wait states
-                       wbr    = writebuffer_flush;
+        rd_idle: if (HREADY && ahb_read)
+                 begin
+                     rd_nxt_state = rd_read;
+                     hreadyout_rd = 1'b0;  //insert wait states
+                     wbr    = writebuffer_flush;
 
-                       rdreq  = 1'b1;
-                       rdadr  = HADDR;
-                       rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
-                   end
+                     rdreq  = 1'b1;
+                     rdadr  = HADDR;
+                     rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
+                 end
 
         //wait for scheduler to reply
         rd_read: if (rdrdy_i)
                  begin
-                     //scheduler response, during initialisation
-		     rd_nxt_state = rd_idle;
-                     hreadyout_rd = 1'b1;
-                     rdreq  = 1'b0;
-                 end
-                 else
-                 begin
-                     //HRDATA read response
-                     hreadyout_rd = hreadyout_hrdata;
+                     rd_nxt_state = rd_idle;
+                     rdreq = 1'b0;
+                     hreadyout_rd = csr_i.ctrl.mode == 2'b00 ? 1'b0 : 1'b1;
                  end
       endcase
     end
