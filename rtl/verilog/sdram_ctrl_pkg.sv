@@ -81,7 +81,7 @@ package sdram_ctrl_pkg;
                            //10: 64bits on DQ[ 63:0]
                            //11:128bits on DQ[127:0]
     logic [15:4] reserved15_4;
-    logic [ 3:0] writebuffer_timeout; //in 2^writebuffer count
+    logic [ 3:0] writebuffer_timeout; //in 2^writebuffer_timeout HCLK counts
                                       //a value of zero disables the write buffer timer
   } csr_ctrl_t;
  
