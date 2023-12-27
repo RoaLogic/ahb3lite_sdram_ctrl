@@ -143,6 +143,10 @@ module sdram_ahb_if
     max = a > b ? a : b;
   endfunction : max
 
+  function automatic int min(input int a, input int b);
+    min = a < b ? a : b;
+  endfunction : min
+
 
   localparam HDATA_BYTES       = HDATA_SIZE/8;
   localparam WRBUFFER_BYTES    = WRITEBUFFER_SIZE/8;
@@ -249,7 +253,7 @@ module sdram_ahb_if
      input [            1:0] dqsize;
 
      int totalbytes     = hburst2cnt(hburst) << hsize;
-     sdram_read_xfercnt = totalbytes/2 >> dqsize;
+     sdram_read_xfercnt = max(totalbytes/2 >> dqsize, 1);
   endfunction : sdram_read_xfercnt
 
 
@@ -296,6 +300,7 @@ module sdram_ahb_if
                                 beat_read;
   logic [HSIZE_SIZE       -1:0] beat_size;
   logic [HDATA_BYTES_BITS -1:0] beat_addr;
+  logic [                  3:0] beat_cnt;
 
 
   //Write
@@ -326,8 +331,8 @@ module sdram_ahb_if
 
 
   //FSM encoding
-  enum logic {rd_idle, rd_read} rd_nxt_state, rd_state;
-  enum logic {wr_idle = 1'b0, wr_wait=1'b1} wr_nxt_state, wr_state;
+  enum logic [1:0] {rd_idle = 2'b00, rd_start = 2'b01, rd_pending = 2'b10, rd_final = 2'b11} rd_nxt_state, rd_state;
+  enum logic       {wr_idle = 1'b0, wr_wait=1'b1} wr_nxt_state, wr_state;
 
   logic hreadyout_rd, hreadyout_rd_reg;
   logic hreadyout_wr, hreadyout_wr_reg;
@@ -338,7 +343,6 @@ module sdram_ahb_if
   logic                           wbr;      //write-before-read
 
   logic                           rdreq;
-  logic                           rdreq_pending, rdreq_pending_reg;
   logic [HADDR_SIZE         -1:0] rdadr;
   logic [                    7:0] rdsize;
 
@@ -626,6 +630,8 @@ module sdram_ahb_if
         begin
             if (beat_size <= (csr_i.ctrl.dqsize +1'h1))
             begin
+                //read once every dqsize/beat_size
+                rdfifo_rreq = rd_idx % (1 << beat_size) == 0;
             end
             else
             begin
@@ -643,29 +649,25 @@ module sdram_ahb_if
     else
     if (!rdfifo_empty)
     begin
-        hreadyout_hrdata <= 1'b0;
-
         if (beat_size <= (csr_i.ctrl.dqsize +1'h1))
         begin
             //sdram provides more data than needed in a single beat
-//            hrdata       = rdfifo_q << (beat_addr >> (1 << csr_i.ctrl.dqsize));
-            rd_idx           <= rd_idx +1'h1;
+            rd_idx           <= rd_idx + (1 << beat_size);
             hreadyout_hrdata <= 1'b1;
         end
         else
         begin
             //sdram provides partial data needed in a single beat
             //SDRAM provides multiples of 16bits
-//            hrdata[rd_idx_reg*16 +: SDRAM_DQ_SIZE] = rdfifo_q;
-
             rd_idx           <= rd_idx + (2 << csr_i.ctrl.dqsize);
             hreadyout_hrdata <= rd_idx == beat_size;
         end
-      end
-      else
-      begin
-          hreadyout_hrdata <= 1'b0;
-      end
+    end
+    else
+    begin
+        hreadyout_hrdata <= 1'b0;
+        rd_idx           <= {$bits(rd_idx){1'b0}};
+    end
 
 
   //1 cycle delay from rdfifo_rreq assertion until data is available
@@ -678,7 +680,10 @@ module sdram_ahb_if
   always @(posedge HCLK)
     if (rdfifo_rreq_dly)
     begin
-        HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q;
+        if (beat_size < (csr_i.ctrl.dqsize +1'h1))
+          HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((rd_idx_dly*8) >> beat_size);// (8*rd_idx_dly) % (1 << beat_size) );
+        else
+          HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q;
     end
 
 
@@ -687,43 +692,74 @@ module sdram_ahb_if
   always_comb
   begin
       rd_nxt_state  = rd_state;
-      hreadyout_rd  = rdfifo_rreq_dly ? hreadyout_hrdata : hreadyout_rd_reg & ~rdreq_pending_reg;
-      rdreq_pending = rdreq_pending_reg & ~hreadyout_rd_reg;
+      hreadyout_rd = hreadyout_rd_reg;
 
-      wbr    = wbr_o & ~rdrdy_i;
-      rdreq  = rdreq_o;
+      wbr    = wbr_o   & ~rdrdy_i;
+      rdreq  = rdreq_o & ~rdrdy_i;
       rdadr  = rdadr_o;
       rdsize = rdsize_o;
 
       case (rd_state)
+        //wait for final data ready
+        rd_final  : begin
+                        if (hreadyout_hrdata)
+                        begin
+                            rd_nxt_state = rd_idle;
+                            hreadyout_rd = 1'b1;
+                        end
+                        else
+                        begin
+                            hreadyout_rd = 1'b0;
+                        end
+                    end
+
+        //handle 2nd transaction while 1st transaction still pending
+        rd_pending: if (hreadyout_hrdata)
+                    begin
+                        rd_nxt_state = rd_final;
+                        hreadyout_rd = 1'b1;
+                    end
+                    else
+                    begin
+                        hreadyout_rd = 1'b0;
+                    end
+
+        //wait for scheduler to reply/accept request
+        rd_start  : if (rdrdy_i)
+                    begin
+                        rdreq  = ahb_read;
+                        rdadr  = HADDR;
+                        rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
+
+                        if (csr_i.ctrl.mode != 2'b00)
+                        begin
+                            rd_nxt_state = rd_idle;
+                            hreadyout_rd = 1'b1;
+                        end
+                        else if (ahb_read)
+                        begin
+                            rd_nxt_state = rd_pending;
+                            hreadyout_rd = 1'b0;
+                            wbr          = writebuffer_flush;
+                        end
+                        else
+                        begin
+                            rd_nxt_state = rd_final;
+                            hreadyout_rd = 1'b0;
+                        end
+                    end
+
         //wait for action
-        rd_idle: if ( (HREADY && ahb_read && !rdreq_pending_reg) || (!hreadyout_rd_reg && ahb_read && !rdreq_pending_reg) )
-                 begin
-                     rd_nxt_state  = rd_read;
-                     hreadyout_rd  = 1'b0;  //insert wait states
-                     wbr           = writebuffer_flush;
-                     rdreq_pending = ~hreadyout_rd_reg;
+        rd_idle   : if (HREADY && ahb_read) //start new transaction
+                    begin
+                        rd_nxt_state = rd_start;
+                        hreadyout_rd = 1'b0; //insert wait states
+                        wbr          = writebuffer_flush;
 
-                     rdreq  = 1'b1;
-                     rdadr  = HADDR;
-                     rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
-                 end
-
-        //wait for scheduler to reply
-        rd_read: if (rdrdy_i)
-                 begin
-                     rd_nxt_state = rd_idle;
-                     rdreq        = ~hreadyout_rd_reg & ahb_read & ~rdreq_pending_reg;
-                     rdadr        = HADDR;
-                     rdsize       = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
-
-                     hreadyout_rd = csr_i.ctrl.mode != 2'b00; //always respond when not in normal mode
-/*
-                     hreadyout_rd = csr_i.ctrl.mode == 2'b00
-                                                        ? (rdfifo_rreq_dly ? hreadyout_hrdata : hreadyout_rd_reg)
-                                                        : 1'b1;
-*/
-                 end
+                        rdreq = 1'b1;
+                        rdadr = HADDR;
+                        rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
+                    end
       endcase
     end
 
@@ -740,7 +776,6 @@ module sdram_ahb_if
         HREADYOUT        <= 1'b1;
 
         pingpong         <= 1'b0;
-        rdreq_pending_reg <= 1'b0;
 
         wbr_o            <= 1'b0;
         wrreq_dly        <= 1'b0;
@@ -761,7 +796,6 @@ module sdram_ahb_if
 	hreadyout_rd_reg <= hreadyout_rd;
         HREADYOUT        <= hreadyout_wr & hreadyout_rd;
 
-        rdreq_pending_reg <= rdreq_pending;
         pingpong         <= nxt_pingpong;
 
         wbr_o            <= wbr;
