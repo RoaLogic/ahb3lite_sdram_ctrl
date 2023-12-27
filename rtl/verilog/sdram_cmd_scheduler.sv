@@ -129,11 +129,11 @@ import sdram_ctrl_pkg::*;
   //
   // Constants
   //
-  function int max(input int a, input int b);
+  function automatic int max(input int a, input int b);
     max = a > b ? a : b;
   endfunction : max
 
-  function int min(input int a, input int b);
+  function automatic int min(input int a, input int b);
     min = a < b ? a : b;
   endfunction : min
 
@@ -679,7 +679,7 @@ endgenerate
     begin
         xfer_cnt            <=   xfer_cnt_ld_val;
         xfer_cnt_done       <= ~|xfer_cnt_ld_val;
-        xfer_cnt_last_burst <= ~|xfer_cnt_ld_val;
+        xfer_cnt_last_burst <=   xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size);
         xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
     end
 
@@ -698,8 +698,10 @@ generate
         case (csr_i.ctrl.mode)
           2'b00: //normal mode
             case (rdrdy_o[port])
-              1'b0: if ( (port == rdport) && active_rd &&
-                         (xfer_cnt <= (1 << csr_i.ctrl.burst_size) +1'h1) ) //xfer_cnt_last_burst
+              1'b0: if ( rdreq_nowbr[port] && (port == rdport) && /*active_rd &&*/ (
+                           (                 xfer_cnt_last_burst                              ) ||
+                           ( xfer_cnt_ld && (xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size)) )
+                         ) )
                       rdrdy_o[port] <= 1'b1;
 
               1'b1: rdrdy_o[port] <= 1'b0;
@@ -750,7 +752,7 @@ endgenerate
 generate
   for (port=0; port < PORTS; port++)
   begin: gen_req
-      assign rdreq_nowbr[port] = rdreq_i[port] & ~wbr_i[port];
+      assign rdreq_nowbr[port] = rdreq_i[port] & ~wbr_i[port] & ~rdrdy_o[port];
       assign wrreq[port]       = wrreq_i[port];
 
       assign rdreq_nowbr_act_bank[port] = rdreq_nowbr[port] & (
@@ -841,7 +843,7 @@ endgenerate
                          if ( tRCD_done[wrba_i[wrport]] )
                          begin
                              //Write
-                             if (burst_cnt_done)
+                             if (burst_cnt_done || burst_terminate)
                                cmd_wr_task(wrport,
                                            wrba_i [wrport],
                                            xfer_cnt_done ? wrcol_i[wrport] : xfer_col,
@@ -870,7 +872,7 @@ endgenerate
                          if (tRCD_done[rdba_i[rdport]] )
                          begin
                              //Read
-                             if (burst_cnt_done)
+                             if (burst_cnt_done || burst_terminate)
                                 cmd_rd_task(rdport,
                                             rdba_i  [rdport],
                                             xfer_cnt_done ? rdcol_i [rdport] : xfer_col,
