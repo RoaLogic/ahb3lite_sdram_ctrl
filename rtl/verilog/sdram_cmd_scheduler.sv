@@ -248,6 +248,7 @@ import sdram_ctrl_pkg::*;
   states_t                    nxt_state,      state;
   sdram_cmds_t                sdram_nxt_cmd,  sdram_cmd;
   logic [SDRAM_ADDR_SIZE-1:0] sdram_nxt_addr, sdram_addr;
+  logic [MAX_CSIZE      -1:0] sdram_nxt_col;
   logic [SDRAM_BA_SIZE  -1:0] sdram_nxt_ba,   sdram_ba;
   logic [SDRAM_DQ_SIZE  -1:0] sdram_dq;
   logic [SDRAM_DQ_SIZE/8-1:0] sdram_dm;
@@ -272,7 +273,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_NOP;
     sdram_nxt_addr      = sdram_addr;
     sdram_nxt_ba        = sdram_ba;
-
+    sdram_nxt_col       = {$bits(sdram_nxt_col){1'bx}};
     bank_nxt_status     = bank_status;
 
     for (int bank = 0; bank < 4; bank++)
@@ -364,13 +365,14 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_WR;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
+    sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
 //    tRAS
 //and tWR cycle(s) after last valid data
 //or  interrupted by read or write (with or without auto precharge)
     tRP_load_val        = tRAS_cnt[port]
-                          + (1 << csr_i.ctrl.burst_size)
+                          + (1'h1 << csr_i.ctrl.burst_size)
                           + csr_i.timing.tWR;
     bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
 
@@ -401,6 +403,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_RD;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
+    sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
 //    tRAS
@@ -637,7 +640,7 @@ endgenerate
     end
     else if (rdcmd_queue[1].valid)
     begin
-        rdcmd_queue_cnt      <= rdcmd_queue[1].xfer_size +'h1;
+        rdcmd_queue_cnt      <= rdcmd_queue[1].xfer_size +1'h1;
         rdcmd_queue_cnt_done <= 1'b0;
 
         for (int p=0; p < $size(rdqvalid_o); p++)
@@ -648,7 +651,7 @@ endgenerate
     else if (!rdcmd_queue_cnt_done)
     begin
         rdcmd_queue_cnt      <= rdcmd_queue_cnt -1'h1;
-        rdcmd_queue_cnt_done <= rdcmd_queue_cnt == 'h1;
+        rdcmd_queue_cnt_done <= rdcmd_queue_cnt == 1'h1;
 
         for (int p=0; p < $size(rdqvalid_o); p++)
           rdqvalid_o[p] <= 1'b0;
@@ -669,7 +672,6 @@ endgenerate
     end
     else if (|xfer_cnt)
     begin
-        //there's a special case for burst_size=1; add another tick
         xfer_cnt            <=  xfer_cnt -1'h1;
         xfer_cnt_done       <= (xfer_cnt == 1'h1);
         xfer_cnt_last_burst <= (xfer_cnt == (1 << csr_i.ctrl.burst_size) +1'h1);
@@ -680,7 +682,8 @@ endgenerate
         xfer_cnt            <=   xfer_cnt_ld_val;
         xfer_cnt_done       <= ~|xfer_cnt_ld_val;
         xfer_cnt_last_burst <=   xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size);
-        xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
+//        xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
+        xfer_col            <=   sdram_nxt_col + 1'h1; //use dedicated sdram_nxt_col to reduce critical path
     end
 
     assign burst_terminate = xfer_cnt_done & ~burst_cnt_done;
@@ -741,8 +744,8 @@ endgenerate
     end
     else
     begin
-        xfer_dq_wbuf <= xfer_dq_wbuf >> (16 << csr_i.ctrl.dqsize);
-        xfer_dm_wbuf <= xfer_dm_wbuf >> ( 2 << csr_i.ctrl.dqsize);
+        xfer_dq_wbuf <= xfer_dq_wbuf >> (5'd16 << csr_i.ctrl.dqsize);
+        xfer_dm_wbuf <= xfer_dm_wbuf >> (2'h2 << csr_i.ctrl.dqsize);
     end
 
 
@@ -875,7 +878,7 @@ endgenerate
                              if (burst_cnt_done || burst_terminate)
                                 cmd_rd_task(rdport,
                                             rdba_i  [rdport],
-                                            xfer_cnt_done ? rdcol_i [rdport] : xfer_col,
+                                            xfer_cnt_done ? rdcol_i[rdport] : xfer_col,
                                             rdsize_i[rdport],
                                             csr_i.ctrl.ap,
                                             csr_i.ctrl.dqsize,
