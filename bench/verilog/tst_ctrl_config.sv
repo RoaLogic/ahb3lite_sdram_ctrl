@@ -176,7 +176,7 @@
                   ( SDRAM_IAM               << 19) |
                   ( SDRAM_AP                << 18) |
                   ( SDRAM_DSIZE             << 16) |
-                  128,                      //writebuffer timeout
+                  7,                                //writebuffer timeout = 2^7
                   4'hf);
 
 
