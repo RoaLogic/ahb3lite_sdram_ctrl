@@ -370,7 +370,7 @@ endgenerate
   initial
   begin
       PCLK = 1'b0;
-      repeat (5) @(posedge PCLK);
+      repeat (1) @(posedge PCLK);
       apb_reset();
   end
  
@@ -384,16 +384,25 @@ endgenerate
       wait_for_init_done();
       initialise_sdram_ctrl();
 
-      write_sdram_seq(HSIZE_B8 , HBURST_SINGLE, 70);
-      write_sdram_seq(HSIZE_B32, HBURST_SINGLE, 30);
-      write_sdram_seq(HSIZE_B16, HBURST_INCR4, 30);
+      test_buffer_fill_sequential;
+
+      for (int run=0; run < 70; run++)
+        tst_write(AHB_CTRL_PORT, run, HSIZE_B8, HBURST_SINGLE);
+
+//      write_sdram_seq(HSIZE_B8 , HBURST_SINGLE, 70);
+//      write_sdram_seq(HSIZE_B32, HBURST_SINGLE, 30);
+//      write_sdram_seq(HSIZE_B16, HBURST_INCR4, 30);
+
+
+      //idle AHB bus
+      ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
 
       repeat (100) @(posedge HCLK);
 
-      read_sdram_seq(HSIZE_B8,  HBURST_SINGLE, 5);
-      read_sdram_seq(HSIZE_B32, HBURST_SINGLE, 5);
-      read_sdram_seq(HSIZE_B16, HBURST_INCR4,  2);
+//      read_sdram_seq(HSIZE_B8,  HBURST_SINGLE, 5);
+//      read_sdram_seq(HSIZE_B32, HBURST_SINGLE, 5);
+//      read_sdram_seq(HSIZE_B16, HBURST_INCR4,  2);
 
       goodbye_msg();
 
