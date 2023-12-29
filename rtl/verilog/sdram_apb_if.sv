@@ -200,7 +200,7 @@ import sdram_ctrl_pkg::*;
     begin
         csr.ctrl   <= CSR_CTRL_RESET_VALUE;
         csr.timing <= CSR_TIMING_RESET_VALUE;
-        csr.tREF   <= 128;
+        csr.tREF   <= CSR_TREF_RESET_VALUE;
     end
     else if (apb_write)
     case (PADDR)
@@ -310,6 +310,7 @@ import sdram_ctrl_pkg::*;
     begin
         ahb_csr_o.ctrl   <= CSR_CTRL_RESET_VALUE;
         ahb_csr_o.timing <= CSR_TIMING_RESET_VALUE;
+        ahb_csr_o.tREF   <= CSR_TREF_RESET_VALUE;
     end
     else if (ahb_write)
     begin
