@@ -37,59 +37,96 @@
 ////////////////////////////////////////////////////////////////////
 
 
-  // -- SDRAM Access routines
-  //
-  task automatic write_sdram_seq(
-    input [HSIZE_SIZE-1:0 ] size,
-    input [HBURST_SIZE-1:0] burst,
-    input int               runs
-  );
-    //filling sdram with sequential numbers
-    //start at address 0 and fill memory
-    int                                 run = 0;
-    int                                 burstsize;
-    logic        [SDRAM_ADDR_SIZE -1:0] adr;
-    static logic [HDATA_SIZE-1:0]       wbuf[];
 
-    //create write buffer
-    case (burst)
-      HBURST_SINGLE: burstsize = 1;
-      HBURST_INCR  : burstsize = 128;
-      HBURST_WRAP4 : burstsize = 4;
-      HBURST_INCR4 : burstsize = 4;
-      HBURST_WRAP8 : burstsize = 8;
-      HBURST_INCR8 : burstsize = 8;
-      HBURST_WRAP16: burstsize = 16;
-      HBURST_INCR16: burstsize = 16;
-    endcase
-    wbuf = new[burstsize];
+/* Testbuffer
+ * Buffer containing data to write/read
+ * Compare to contents written to/read from SDRAM memory
+ */
+logic [SDRAM_DQ_SIZE-1:0] test_buffer [2**(SDRAM_ROWS+SDRAM_COLS)];
+
+// Fill test_buffer
+task test_buffer_fill_sequential;
+  foreach (test_buffer[i])
+    for (int b=0; b < SDRAM_DQ_SIZE/8; b++)
+       test_buffer[i][b*8 +: 8] = i*(SDRAM_DQ_SIZE/8) +b;
+endtask : test_buffer_fill_sequential;
+
+task test_buffer_fill_random;
+  foreach (test_buffer[i])
+    test_buffer[i] = $urandom;
+endtask : test_buffer_fill_random;
 
 
-    //start at address 0
-    adr = 0;
+/* Useful functions
+ */
+function automatic int hburst2int (input [HBURST_SIZE-1:0] hburst);
+  case (hburst)
+    HBURST_SINGLE: hburst2int = 1;
+    HBURST_INCR  : hburst2int = 128;
+    HBURST_WRAP4 : hburst2int = 4;
+    HBURST_INCR4 : hburst2int = 4;
+    HBURST_WRAP8 : hburst2int = 8;
+    HBURST_INCR8 : hburst2int = 8;
+    HBURST_WRAP16: hburst2int = 16;
+    HBURST_INCR16: hburst2int = 16;
+  endcase
+endfunction : hburst2int
 
-    while (run < runs)
-    begin
-        //fill write buffer
-        foreach (wbuf[i])
-          for (int b=0; b < HDATA_SIZE/8; b++)
-            wbuf[i][b*8 +: 8] = run*(burstsize * (1 << size) /*HDATA_SIZE/8*/) +i*(1 << size) +b;
 
-        //AHB write
-        ahb_if[AHB_CTRL_PORT].ahb_bfm.write(adr, wbuf, size, burst);
 
-        //next address
-        adr = adr + (burstsize << size);
+/* -- SDRAM Access routines
+ */
+task automatic write_sdram_seq(
+  input [HSIZE_SIZE-1:0 ] size,
+  input [HBURST_SIZE-1:0] burst,
+  input int               runs
+);
+  //filling sdram with sequential numbers
+  //start at address 0 and fill memory
+  int                                 run = 0;
+  int                                 burstsize;
+  logic        [SDRAM_ADDR_SIZE -1:0] adr;
+  static logic [HDATA_SIZE-1:0]       wbuf[];
 
-        //next run                
-        run++;
-    end
+  //create write buffer
+  case (burst)
+    HBURST_SINGLE: burstsize = 1;
+    HBURST_INCR  : burstsize = 128;
+    HBURST_WRAP4 : burstsize = 4;
+    HBURST_INCR4 : burstsize = 4;
+    HBURST_WRAP8 : burstsize = 8;
+    HBURST_INCR8 : burstsize = 8;
+    HBURST_WRAP16: burstsize = 16;
+    HBURST_INCR16: burstsize = 16;
+  endcase
+  wbuf = new[burstsize];
 
-    //idle AHB bus
-    ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
-    wait fork;
-  endtask : write_sdram_seq
+  //start at address 0
+  adr = 0;
+
+  while (run < runs)
+  begin
+      //fill write buffer
+      foreach (wbuf[i])
+        for (int b=0; b < HDATA_SIZE/8; b++)
+          wbuf[i][b*8 +: 8] = run*(burstsize * (1 << size) /*HDATA_SIZE/8*/) +i*(1 << size) +b;
+
+      //AHB write
+      ahb_if[AHB_CTRL_PORT].ahb_bfm.write(adr, wbuf, size, burst);
+
+      //next address
+      adr = adr + (burstsize << size);
+
+      //next run                
+      run++;
+  end
+
+  //idle AHB bus
+  ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+
+  wait fork;
+endtask : write_sdram_seq
 
 
   task automatic read_sdram_seq(
@@ -129,7 +166,7 @@
         //next address
         adr = adr + (burstsize << size);
 
-        //next run                
+        //next run
         run++;
     end
 
@@ -138,3 +175,36 @@
 
     wait fork;
   endtask : read_sdram_seq
+
+
+//Reads content from test_buffer and writes it to the SDRAM
+task tst_write (
+    input int               port,
+    input [HADDR_SIZE -1:0] start_address,
+    input [HSIZE_SIZE -1:0] hsize,
+    input [HBURST_SIZE-1:0] hburst
+);
+
+  int offset;
+
+  //create new transaction buffer
+  static logic [HDATA_SIZE-1:0] buffer[];
+  buffer = new[ hburst2int(hburst) ];
+
+  //fill transaction buffer
+  foreach(buffer[i])
+    for (int b=0; b < HDATA_SIZE/8; b++)
+    begin
+        offset = start_address + (i*HDATA_SIZE/8) + b;
+        buffer[i][b*8 +: 8] = test_buffer[offset / (SDRAM_DQ_SIZE/8)][ (offset % (SDRAM_DQ_SIZE/8)) *8 +: 8];
+    end
+
+  //AHB write
+  ahb_if[AHB_CTRL_PORT].ahb_bfm.write(start_address, buffer, hsize, hburst);
+endtask : tst_write
+
+
+//Compares content of the SDRAM memory with the test_buffer
+function tst_compare;
+
+endfunction : tst_compare
