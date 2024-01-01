@@ -447,7 +447,7 @@ module sdram_ahb_if
         writebuffer_tag[0] <= {$bits(writebuffer_tag[0]){1'b0}};
         writebuffer_tag[1] <= {$bits(writebuffer_tag[1]){1'b0}};
     end
-    else if ( HREADY && writebuffer_we) writebuffer_tag[pingpong] <= write_tag;
+    else if (writebuffer_we) writebuffer_tag[pingpong] <= write_tag;
 
 
   //IDX
@@ -538,7 +538,8 @@ module sdram_ahb_if
   //Flush
   assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag == writebuffer_tag[       0])) |
                              (ahb_read  & writebuffer_dirty[       1] & (tag == writebuffer_tag[       1])) |
-                             (ahb_write & writebuffer_dirty[pingpong] & (tag != writebuffer_tag[pingpong]));
+                             (ahb_write & writebuffer_dirty[pingpong] & (tag != writebuffer_tag[pingpong])) |
+                             (ahb_write & writebuffer_we              & (tag != write_tag)                );
 
 
   //Write FSM
