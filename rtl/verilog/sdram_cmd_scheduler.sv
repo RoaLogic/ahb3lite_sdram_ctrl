@@ -860,7 +860,7 @@ endgenerate
                      else if (bank_status[wrba_i[wrport]] == BANK_STATUS_IDLE)
                      begin
                          //Activate bank
-                         if (tRP_done[wrba_i[wrport]]) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
+                         if (tRP_done[wrba_i[wrport]] && tRC_done) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[wrba_i[wrport]]) cmd_pre_task(wrba_i[wrport]);
@@ -891,7 +891,7 @@ endgenerate
                      else if (bank_status[rdba_i[rdport]] == BANK_STATUS_IDLE)
                      begin
                          //Activate bank
-                         if (tRP_done[rdba_i[rdport]]) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
+                         if (tRP_done[rdba_i[rdport]] && tRC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[rdba_i[rdport]]) cmd_pre_task(rdba_i[rdport]);
