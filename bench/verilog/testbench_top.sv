@@ -46,7 +46,7 @@ import ahb3lite_pkg::*;
 
   parameter int  AHB_PORTS            = 1;
   parameter int  AHB_CTRL_PORT        = 0;
-  parameter int  HADDR_SIZE           = 20;
+  parameter int  HADDR_SIZE           = 23;
   parameter int  HDATA_SIZE           = 32;
 
   parameter int  PADDR_SIZE           =  4;
