@@ -827,7 +827,7 @@ endgenerate
 
 
                  //any refreshes to service?
-                 if (|refreshes_pending && &tRP_done && tRC_done)
+                 if (|refreshes_pending && &tRP_done && tRC_done && xfer_cnt_done)
                  begin
                      if (bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
                      else                                     cmd_pre_all_task();
@@ -854,6 +854,7 @@ endgenerate
                                            csr_i.ctrl.dqsize,
                                            xfer_cnt_last_burst);
                          end
+                         else cmd_none_task(); //clear previous commands; prevent two actions fighting
                      end
                      //Is the bank idle (precharged)?
                      else if (bank_status[wrba_i[wrport]] == BANK_STATUS_IDLE)
@@ -884,6 +885,7 @@ endgenerate
                                             csr_i.ctrl.dqsize,
                                             xfer_cnt_last_burst);
                          end
+                         else cmd_none_task(); //clear previous commands; prevent two actions fighting
                      end
                      //Is the bank idle (precharged)?
                      else if (bank_status[rdba_i[rdport]] == BANK_STATUS_IDLE)
