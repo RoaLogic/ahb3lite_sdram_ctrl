@@ -1,3 +1,5 @@
+{% include _includes/readme.md %}
+
 # About
 
 Roa Logic provides Silicon-Proven IP solutions for FPGA and ASIC implementations. All IP comes packed with a full featured testbench and documentation. In addition custom solutions are provided on request.
