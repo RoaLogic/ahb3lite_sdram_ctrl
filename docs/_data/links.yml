@@ -1,0 +1,15 @@
+ 
+email:             info@roalogic.com  
+website:           https://roalogic.com  
+phone:             tel:+31454055681  
+repos:             https://github.com/roalogic
+
+# IP Links
+cpu_core:          https://roalogic.github.io/RV12  
+plic_core:         https://roalogic.github.io/plic  
+timer_core:        https://roalogic.github.io/ahb3lite_timer  
+memory_core:       https://roalogic.github.io/ahb3lite_memory  
+switch_core:       https://roalogic.github.io/ahb3lite_interconnect  
+bridge_core:       https://roalogic.github.io/ahb3lite_apb_bridge  
+mux_core:          https://roalogic.github.io/apb4_mux  
+gpio_core:         https://roalogic.github.io/apb4_gpio

@@ -1,0 +1,22 @@
+% Load Roalogic Title Page Generator
+\usepackage{pkg/roalogicdatasheet}
+
+\graphicspath{ {assets/img/} }
+
+% Document Variables
+
+\title{RoaLogic Datasheet Template}
+\heading{RoaLogic Datasheet Template}
+\author{Roa Logic}
+\date{28-Dec-2023}
+\version{1.0}
+\doctype{Datasheet}
+\project{https://roalogic.github.io/ahb3lite\_sdram\_ctrl}
+\author{Paul Hardy}
+
+ % Set page headers/footer
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\theheading\space(v\theversion)}
+\fancyhead[R]{\includegraphics[width=50px,trim=0 25px 0 0]{assets/img/RoaLogicHeader.eps}}
+\fancyfoot[C]{\thepage}

@@ -1,0 +1,38 @@
+title: AHB-Lite SDRAM Controller
+description: Parameterised SDRAM Controller with AHB-Lite Host I/F
+project: ahb3lite_sdram_ctrl
+
+#theme: jekyll-theme-dinky
+show_downloads: true
+show_license: true
+license: Non-Commercial License
+
+repository: RoaLogic/ahb3lite_sdram_ctrl
+
+url: https://roalogic.github.io
+baseurl: /ahb3lite_sdram_ctrl
+
+include:
+  - _pages                  # Non-datasheet GH Pages
+
+exclude:
+  - "*.sublime-project"
+  - "*.sublime-workspace"
+  - "*.graffle"             # Original Omnigraffle sources
+  - "*.sh"                  # Ignore any scripts
+  - "/assets/img/*.pdf"     # PDF images used for PDF Datasheet 
+  - "/assets/img/*.eps"     # EPS images used for PDF Datasheet
+  - markdown                # Markdown Datasheet generation scripts
+  - pkg                     # PDF Datasheet layout definition
+  - tex                     # Original source texfiles
+  - Gemfile
+  - Gemfile.lock
+
+defaults:
+  # _pages
+  - scope:
+      path    : ""
+      type    : pages
+    values:
+  #    layout  : roalogic    # Use custom layout for *all* pages
+      author  : Roa Logic

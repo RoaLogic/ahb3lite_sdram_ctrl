@@ -1,0 +1,3 @@
+#!/usr/local/bin/bash
+
+./scripts/create_markdown.sh ahb3lite_sdram_ctrl_datasheet
