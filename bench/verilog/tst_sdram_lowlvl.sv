@@ -37,53 +37,61 @@
 ////////////////////////////////////////////////////////////////////
 
 
-  task sdram_clear;
-    foreach (sdram_memory.Bank0[i])
-    begin
-        sdram_memory.Bank0[i]={SDRAM_DQ_SIZE{1'bx}};
-        sdram_memory.Bank1[i]={SDRAM_DQ_SIZE{1'bx}};
-        sdram_memory.Bank2[i]={SDRAM_DQ_SIZE{1'bx}};
-        sdram_memory.Bank3[i]={SDRAM_DQ_SIZE{1'bx}};
-    end
-  endtask : sdram_clear
+task sdram_clear;
+  foreach (sdram_memory.Bank0[i])
+  begin
+      sdram_memory.Bank0[i]={SDRAM_DQ_SIZE{1'bx}};
+      sdram_memory.Bank1[i]={SDRAM_DQ_SIZE{1'bx}};
+      sdram_memory.Bank2[i]={SDRAM_DQ_SIZE{1'bx}};
+      sdram_memory.Bank3[i]={SDRAM_DQ_SIZE{1'bx}};
+  end
+endtask : sdram_clear
 
 
-  task map_haddr_to_sdram_address;
-    input  [HADDR_SIZE              -1:0] haddr;
-    output [                         1:0] bank;
-    output [SDRAM_COLS + SDRAM_ROWS -1:0] sdram_address;
+//Convert bus-address to SDRAM bank, row, column
+function automatic [2 + SDRAM_ROWS + SDRAM_COLS -1:0] map_haddr_to_sdram_address (
+  input  [HADDR_SIZE-1:0] haddr
+);
 
-    logic [HADDR_SIZE -1:0] adr;
-    logic [SDRAM_ROWS -1:0] row;
-    logic [SDRAM_COLS -1:0] column;
+  logic [HADDR_SIZE -1:0] adr;
+  logic [            1:0] bank;
+  logic [SDRAM_ROWS -1:0] row;
+  logic [SDRAM_COLS -1:0] column;
 
-    //adjust for DSIZE
-    adr = haddr >> SDRAM_DSIZE >> 1;
+//$display("haddr=%h", haddr);
 
-    //extract column
-    column = adr[0 +: SDRAM_COLS];
+  //adjust for DSIZE
+  adr = haddr >> SDRAM_DSIZE >> 1;
+//$display("adr=%h", adr);
 
-    //extract row
-    adr = adr >> SDRAM_COLS;
-    row = SDRAM_IAM ? adr[2 +: SDRAM_ADDR_SIZE] : adr[0 +: SDRAM_ADDR_SIZE];
+  //extract column
+  column = adr[0 +: SDRAM_COLS];
+//$display("Column=%h", column);
 
-    //extract bank
-    bank = SDRAM_IAM ? adr[1:0] : adr[SDRAM_ROWS +: 2];
+  //extract row
+  adr = adr >> SDRAM_COLS;
+  row = SDRAM_IAM ? adr[2 +: SDRAM_ADDR_SIZE] : adr[0 +: SDRAM_ADDR_SIZE];
+//$display("row=%h", row);
 
-    //sdram address
-    sdram_address = {row, column};
-  endtask : map_haddr_to_sdram_address
+  //extract bank
+  bank = SDRAM_IAM ? adr[1:0] : adr[SDRAM_ROWS +: 2];
+//$display("bank=%d", bank);
+
+  //sdram address
+  map_haddr_to_sdram_address = {bank, row, column};
+endfunction : map_haddr_to_sdram_address
 
 
-  function automatic [SDRAM_DQ_SIZE-1:0] peek_sdram;
-    //peek inside SDRAM and return value at address 'adr'
-    input [HADDR_SIZE-1:0] haddr;
-
+//Peek inside SDRAM and return value at address 'haddr'
+function automatic [SDRAM_DQ_SIZE-1:0] peek_sdram (
+  input  [HADDR_SIZE   -1:0] haddr
+);
     logic [1:0] bank;
     logic [SDRAM_COLS + SDRAM_ROWS -1:0] sdram_address;
 
     //map address
-    map_haddr_to_sdram_address(haddr, bank, sdram_address);
+    {bank, sdram_address} = map_haddr_to_sdram_address(haddr);
+//    $display("haddr=%h, bank=%d, sdram_address=%h", haddr, bank, sdram_address);
 
     //get memory contents
     case (bank)
@@ -92,4 +100,4 @@
       2'b10: peek_sdram = sdram_memory.Bank2[sdram_address];
       2'b11: peek_sdram = sdram_memory.Bank3[sdram_address];
     endcase
-  endfunction : peek_sdram
+endfunction : peek_sdram

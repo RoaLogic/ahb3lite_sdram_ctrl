@@ -176,7 +176,7 @@
                   ( SDRAM_IAM               << 19) |
                   ( SDRAM_AP                << 18) |
                   ( SDRAM_DSIZE             << 16) |
-                  7,                                //writebuffer timeout = 2^7
+                  $clog2(WRITEBUFFER_TIMEOUT),      //writebuffer timeout = 2^n
                   4'hf);
 
 

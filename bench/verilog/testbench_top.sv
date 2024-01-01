@@ -41,31 +41,31 @@ import ahb3lite_pkg::*;
 ;
 
   //Hardware parameters
-  parameter int  HCLK_PERIOD      = 10; //10ns = 100MHz
-  parameter int  PCLK_PERIOD      = 40; //40ns =  25MHz
+  parameter int  HCLK_PERIOD          = 10; //10ns = 100MHz
+  parameter int  PCLK_PERIOD          = 40; //40ns =  25MHz
 
-  parameter int  AHB_PORTS        = 1;
-  parameter int  AHB_CTRL_PORT    = 0;
-  parameter int  HADDR_SIZE       = 20;
-  parameter int  HDATA_SIZE       = 32;
+  parameter int  AHB_PORTS            = 1;
+  parameter int  AHB_CTRL_PORT        = 0;
+  parameter int  HADDR_SIZE           = 20;
+  parameter int  HDATA_SIZE           = 32;
 
-  parameter int  PADDR_SIZE       =  4;
-  parameter int  PDATA_SIZE       = 32;
+  parameter int  PADDR_SIZE           =  4;
+  parameter int  PDATA_SIZE           = 32;
   
-  parameter int  SDRAM_DQ_SIZE    = 32;
-  parameter int  SDRAM_ADDR_SIZE  = 11;
-  parameter int  SDRAM_AP         = 0;
-  parameter int  SDRAM_BURST_SIZE = 8;  //1,2,4,8
+  parameter int  SDRAM_DQ_SIZE        = 32;
+  parameter int  SDRAM_ADDR_SIZE      = 11;
+  parameter int  SDRAM_AP             = 0;
+  parameter int  SDRAM_BURST_SIZE     = 8;  //1,2,4,8
 
-  parameter int  INIT_DLY_CNT     = 100e-6/(PCLK_PERIOD * 1e-9);  //100us in PCLK cycles
-  parameter int  WRITEBUFFER_SIZE = 8 * HDATA_SIZE;
-  parameter      TECHNOLOGY       = "GENERIC";
+  parameter int  INIT_DLY_CNT         = 100e-6/(PCLK_PERIOD * 1e-9);  //100us in PCLK cycles
+  parameter int  WRITEBUFFER_SIZE     = 8 * HDATA_SIZE;
+  parameter      TECHNOLOGY           = "GENERIC";
 
   /* PCB trace
    */
-  parameter real PROPAGATION_DELAY = 15.0; //15cm/ns
-  parameter real TRACE_LENGTH      = 6.0;  //3cm
-  parameter real TRACE_DELAY       = TRACE_LENGTH / PROPAGATION_DELAY; //15cm/ns
+  parameter real PROPAGATION_DELAY    = 15.0; //15cm/ns
+  parameter real TRACE_LENGTH         = 6.0;  //3cm
+  parameter real TRACE_DELAY          = TRACE_LENGTH / PROPAGATION_DELAY; //15cm/ns
 
 
   /* Software parameters
@@ -74,14 +74,14 @@ import ahb3lite_pkg::*;
 
   //IS42VM32200-S60
   //Control
-  parameter logic SDRAM_BTAC        = 0;
-  parameter int   SDRAM_CL          = 2;
-  parameter logic SDRAM_PP          = 0;
-  parameter int   SDRAM_ROWS        = SDRAM_ADDR_SIZE; //number of address bits for ROW
-  parameter int   SDRAM_COLS        = 8;               //number of address bits for COLUMN
-  parameter logic SDRAM_IAM         = 0;
-  parameter int   SDRAM_DSIZE       = SDRAM_DQ_SIZE;
-  parameter int   WBUF_TIMEOUT      = 0;
+  parameter logic SDRAM_BTAC          = 0;
+  parameter int   SDRAM_CL            = 2;
+  parameter logic SDRAM_PP            = 0;
+  parameter int   SDRAM_ROWS          = SDRAM_ADDR_SIZE; //number of address bits for ROW
+  parameter int   SDRAM_COLS          = 8;               //number of address bits for COLUMN
+  parameter logic SDRAM_IAM           = 0;
+  parameter int   SDRAM_DSIZE         = 2'b00;           //number of bits from SDRAM_DQ_SIZE to use; 00=16, 01=32, 10=64, 11=128
+  parameter int   WRITEBUFFER_TIMEOUT = 8;
 
   //timing parameters (in ns)
   parameter real REFRESHES      = 4096;
@@ -177,8 +177,8 @@ import ahb3lite_pkg::*;
     $display (" `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---' ");
     $display ("- SDRAM Controller Testbench ------------  `---'  ----------");
     $display ("-------------------------------------------------------------");
-    $display ("  Done");
-//    $display ("  Status = %s", checker_inst.ugly ? "FAILED" : "PASSED");
+    $display ("  Done; Tests=%0d, failed=%0d", total, ugly);
+    $display ("  Status = %s", ugly ? "FAILED" : "PASSED");
     $display ("-------------------------------------------------------------");
   endtask
 
@@ -384,15 +384,7 @@ endgenerate
       wait_for_init_done();
       initialise_sdram_ctrl();
 
-      test_buffer_fill_sequential;
-
-      for (int run=0; run < 70; run++)
-        tst_write(AHB_CTRL_PORT, run, HSIZE_B8, HBURST_SINGLE);
-
-//      write_sdram_seq(HSIZE_B8 , HBURST_SINGLE, 70);
-//      write_sdram_seq(HSIZE_B32, HBURST_SINGLE, 30);
-//      write_sdram_seq(HSIZE_B16, HBURST_INCR4, 30);
-
+      tst_write_sequential(5* 1024 * 1024);
 
       //idle AHB bus
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();

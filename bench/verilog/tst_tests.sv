@@ -37,6 +37,23 @@
 ////////////////////////////////////////////////////////////////////
 
 
+/* Error counter
+ */
+int total, good, bad, ugly;
+
+initial
+begin
+    total=0;
+    good=0;
+    bad =0;
+    ugly=0;
+end
+
+task clear_error_counters;
+  good=0;
+  bad =0;
+endtask
+
 
 /* Testbuffer
  * Buffer containing data to write/read
@@ -185,17 +202,32 @@ task tst_write (
     input [HBURST_SIZE-1:0] hburst
 );
 
-  int offset;
+  static logic [HDATA_SIZE-1:0] buffer[];
+  logic                  wrap_burst;
+  int                    wrap_size;
+  logic [HADDR_SIZE-1:0] adr_mask;
+  int                    offset;
+  int                    beats;
+
+  //Is this a wrapping burst?
+  wrap_burst = ~hburst[0];
+
+  //How many beats in a transaction
+  beats = hburst2int(hburst);
+
+  //calculate address mask
+  wrap_size = (1 << hsize) * beats;
+  adr_mask  = wrap_size -1;
 
   //create new transaction buffer
-  static logic [HDATA_SIZE-1:0] buffer[];
-  buffer = new[ hburst2int(hburst) ];
+  buffer = new[beats];
 
   //fill transaction buffer
   foreach(buffer[i])
     for (int b=0; b < HDATA_SIZE/8; b++)
     begin
-        offset = start_address + (i*HDATA_SIZE/8) + b;
+        offset = wrap_burst ? (start_address & ~adr_mask) | ((start_address + (i << hsize) +b) & adr_mask)
+                            : start_address + (i << hsize) +b;
         buffer[i][b*8 +: 8] = test_buffer[offset / (SDRAM_DQ_SIZE/8)][ (offset % (SDRAM_DQ_SIZE/8)) *8 +: 8];
     end
 
@@ -204,7 +236,71 @@ task tst_write (
 endtask : tst_write
 
 
-//Compares content of the SDRAM memory with the test_buffer
-function tst_compare;
+/* -- Compare
+ * Compares content of the SDRAM memory with the test_buffer form start_address to end_address
+ */
+task tst_compare (
+  input [HADDR_SIZE-1:0] start_address, end_address
+);
 
-endfunction : tst_compare
+  logic [           7:0] test_buffer_value,   sdram_value;
+  logic [HADDR_SIZE-1:0] test_buffer_address;
+
+  localparam int dsize_bits = 16 << SDRAM_DSIZE;
+
+  for (int adr=start_address; adr < end_address; adr++)
+  begin
+      test_buffer_address = adr / (SDRAM_DQ_SIZE/8);
+//      $display ("adr=%h, buffer_adr=%h, sdram_adr=%h", adr, test_buffer_address, adr >> SDRAM_DSIZE >> 1);
+
+      test_buffer_value = test_buffer[test_buffer_address][(adr % (SDRAM_DQ_SIZE / 8)) *8 +: 8];
+      sdram_value       = peek_sdram(adr)[(adr % (2 << SDRAM_DSIZE)) *8 +: 8];
+
+      total++;
+      if ( test_buffer_value !== sdram_value )
+      begin
+          $display ("ERROR, compare mismatch for HADDR=%0h. Expected %2h, received %2h @%0t", adr, test_buffer_value, sdram_value, $realtime);
+          bad++; ugly++;
+      end
+      else
+          good++;
+  end
+
+endtask : tst_compare
+
+
+
+/* -- Actual tests
+ */
+
+// write sequential data and 
+task tst_write_sequential (
+  input int runs
+);
+  test_buffer_fill_sequential;
+
+  for (int hsize  = 0; hsize  < $clog2(HDATA_SIZE/8); hsize++)
+  for (int hburst = 0; hburst < 8;                    hburst++)
+  begin
+      if (hburst == HBURST_INCR) hburst++;
+
+      clear_error_counters();
+
+      $display ("tst_write_sequential; hsize=%3b, hburst=%3b", hsize, hburst);
+
+      //perform writes
+      for (int adr=0; adr < runs; adr++)
+        tst_write(AHB_CTRL_PORT, adr, hsize, hburst);
+
+      //idle AHB bus
+      ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+
+      //wait for the writebuffer to commit contents
+      repeat (10+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+
+      //check results
+      tst_compare(0, 70);
+
+      $display(" --Done. Good=%0d, Bad=%0d, Ugly=%0d", good, bad, ugly);
+  end
+endtask : tst_write_sequential
