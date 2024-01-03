@@ -59,7 +59,7 @@ endtask
  * Buffer containing data to write/read
  * Compare to contents written to/read from SDRAM memory
  */
-logic [SDRAM_DQ_SIZE-1:0] test_buffer [2**(SDRAM_ROWS+SDRAM_COLS)];
+logic [SDRAM_DQ_SIZE-1:0] test_buffer [2**(2+SDRAM_ROWS+SDRAM_COLS)];
 
 // Fill test_buffer
 task test_buffer_fill_sequential;
@@ -290,16 +290,19 @@ task tst_write_sequential (
 
       //perform writes
       for (int adr=0; adr < runs; adr++)
-        tst_write(AHB_CTRL_PORT, adr, hsize, hburst);
+      begin
+          tst_write(AHB_CTRL_PORT, adr, hsize, hburst);
+          if (adr % 500_000 == 0) $display("  run:%0d of %0d (%0d%%)", adr, runs, 100*adr/runs);
+      end
 
       //idle AHB bus
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
       //wait for the writebuffer to commit contents
-      repeat (10+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+      repeat (50+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
 
       //check results
-      tst_compare(0, 70);
+      tst_compare(0, runs);
 
       $display(" --Done. Good=%0d, Bad=%0d, Ugly=%0d", good, bad, ugly);
   end
