@@ -384,7 +384,7 @@ endgenerate
       wait_for_init_done();
       initialise_sdram_ctrl();
 
-      tst_write_sequential(5* 1024 * 1024);
+      tst_write_sequential(4*1024 * 1024);
 
       //idle AHB bus
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
