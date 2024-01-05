@@ -327,7 +327,7 @@ task tst_write_sequential (
       for (int adr=0; adr < runs; adr++)
       begin
           //skip transactions that cross the AHB address boundary
-          if (wrap_burst &&
+          if (!wrap_burst &&
               ((adr & (AHB_ADDRESS_BOUNDARY-1)) + (hburst2int(hburst) << hsize) > AHB_ADDRESS_BOUNDARY)
              ) continue;
 
