@@ -37,6 +37,11 @@
 ////////////////////////////////////////////////////////////////////
 
 
+/* Constants
+ */
+localparam int AHB_ADDRESS_BOUNDARY = 1024;
+
+
 /* Error counter
  */
 int total, good, bad, ugly;
@@ -62,16 +67,21 @@ endtask
 logic [SDRAM_DQ_SIZE-1:0] test_buffer [2**(2+SDRAM_ROWS+SDRAM_COLS)];
 
 // Fill test_buffer
+task test_buffer_clear;
+  foreach (test_buffer[i])
+    test_buffer[i] = {SDRAM_DQ_SIZE{1'bx}};
+endtask : test_buffer_clear
+
 task test_buffer_fill_sequential;
   foreach (test_buffer[i])
     for (int b=0; b < SDRAM_DQ_SIZE/8; b++)
        test_buffer[i][b*8 +: 8] = i*(SDRAM_DQ_SIZE/8) +b;
-endtask : test_buffer_fill_sequential;
+endtask : test_buffer_fill_sequential
 
 task test_buffer_fill_random;
   foreach (test_buffer[i])
     test_buffer[i] = $urandom;
-endtask : test_buffer_fill_random;
+endtask : test_buffer_fill_random
 
 
 /* Useful functions
@@ -216,8 +226,11 @@ task tst_write (
   beats = hburst2int(hburst);
 
   //calculate address mask
-  wrap_size = (1 << hsize) * beats;
-  adr_mask  = wrap_size -1;
+  if (wrap_burst) //strictly not necessary, but speeds up sims
+  begin
+      wrap_size = beats << hsize;
+      adr_mask  = wrap_size -1;
+  end
 
   //create new transaction buffer
   buffer = new[beats];
@@ -273,17 +286,39 @@ endtask : tst_compare
 /* -- Actual tests
  */
 
-// write sequential data and 
+// write sequential data
 task tst_write_sequential (
-  input int runs
+  input int runs,
+  input bit random
 );
-  test_buffer_fill_sequential;
+  logic wrap_burst;
+  int hsize;
+  int hburst;
 
-  for (int hsize  = 0; hsize  < $clog2(HDATA_SIZE/8); hsize++)
-  for (int hburst = 0; hburst < 8;                    hburst++)
+  int total_start;
+  int ugly_start;
+
+  $display ("\n");
+  $display ("-------------------------------------------------------------");
+  $display (" tst_write_sequential started (%0s)", random ? "random data" : "sequential data");
+  $display ("-------------------------------------------------------------");
+
+  if (random) test_buffer_fill_random();
+  else        test_buffer_fill_sequential();
+
+  total_start = total;
+  ugly_start  = ugly;
+
+  hsize  = 3'b000;
+  hburst = 3'b011;
+  for (hsize  = 0; hsize  < $clog2(HDATA_SIZE/8); hsize++)
+  for (hburst = 0; hburst < 8;                    hburst++)
   begin
       if (hburst == HBURST_INCR) hburst++;
 
+      wrap_burst = ~hburst[0];
+
+      sdram_clear();
       clear_error_counters();
 
       $display ("tst_write_sequential; hsize=%3b, hburst=%3b", hsize, hburst);
@@ -291,7 +326,15 @@ task tst_write_sequential (
       //perform writes
       for (int adr=0; adr < runs; adr++)
       begin
+          //skip transactions that cross the AHB address boundary
+          if (wrap_burst &&
+              ((adr & (AHB_ADDRESS_BOUNDARY-1)) + (hburst2int(hburst) << hsize) > AHB_ADDRESS_BOUNDARY)
+             ) continue;
+
+          //perform AHB write
           tst_write(AHB_CTRL_PORT, adr, hsize, hburst);
+
+          //show test progress
           if (adr % 500_000 == 0) $display("  run:%0d of %0d (%0d%%)", adr, runs, 100*adr/runs);
       end
 
@@ -306,4 +349,106 @@ task tst_write_sequential (
 
       $display(" --Done. Good=%0d, Bad=%0d, Ugly=%0d", good, bad, ugly);
   end
+
+  $display ("-------------------------------------------------------------");
+  $display (" tst_write_sequential finished");
+  $display (" Total tests: %0d, failed tests: %0d", total-total_start, ugly-ugly_start);
+  $display ("-------------------------------------------------------------");
+
 endtask : tst_write_sequential
+
+
+// write random data
+task tst_write_random (
+  input int runs
+);
+  logic [HADDR_SIZE -1:0] haddr;
+  logic [HSIZE_SIZE -1:0] hsize;
+  logic [HBURST_SIZE-1:0] hburst;
+
+  logic                  wrap_burst;
+  int                    wrap_size;
+  logic [HADDR_SIZE-1:0] adr_mask;
+  int                    offset;
+  int                    beats;
+
+  int run;
+  int total_start;
+  int ugly_start;
+
+
+  $display ("\n");
+  $display ("-------------------------------------------------------------");
+  $display (" tst_write_random started");
+  $display ("-------------------------------------------------------------");
+
+  //clear test_buffer
+  test_buffer_clear();
+
+  //clear SDRAM
+  sdram_clear();
+
+  //clear error counters
+  clear_error_counters();
+  total_start = total;
+  ugly_start  = ugly;
+
+  for (run=0; run < runs; run++)
+  begin
+      haddr  = $urandom();
+      hsize  = $urandom_range(0, $clog2(HDATA_SIZE/8));
+      hburst = $urandom();
+
+      //Ignore incrementing bursts
+      if (hburst == HBURST_INCR) hburst++;
+
+      //Is this a wrapping burst?
+      wrap_burst = ~hburst[0];
+
+      //How many beats in a transaction
+      beats = hburst2int(hburst);
+
+      //calculate address mask
+      wrap_size = beats << hsize;
+      if (wrap_burst) //strictly not required, but speeds up sims
+      begin
+          adr_mask  = wrap_size -1;
+      end
+      else
+      begin
+          //skip transactions that cross the AHB address boundary
+          if (((haddr & (AHB_ADDRESS_BOUNDARY-1)) + wrap_size) > AHB_ADDRESS_BOUNDARY) continue;
+      end
+
+      //write values to testbuffer
+      for (int beat=0; beat < beats; beat++)
+      for (int b=0; b < HDATA_SIZE/8; b++)
+      begin
+          offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize) +b) & adr_mask)
+                              : haddr + (beat << hsize) +b;
+          test_buffer[offset / (SDRAM_DQ_SIZE/8)][ (offset % (SDRAM_DQ_SIZE/8)) *8 +: 8] = $urandom();
+      end
+
+
+//      $display ("tst_write_random; hsize=%3b, hburst=%3b, haddr=%h", hsize, hburst, haddr);
+
+      //write values to SDRAM (controller)
+      tst_write(AHB_CTRL_PORT, haddr, hsize, hburst);
+      if (run % 500_000 == 0) $display("  run:%0d of %0d (%0d%%)", run, runs, 100*run/runs);
+  end
+
+  //idle AHB bus
+  ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+
+  //wait for the writebuffer to commit contents
+  repeat (50+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+
+  //check results
+  tst_compare(0, 4*1024*1024); //FIXME
+
+  $display ("-------------------------------------------------------------");
+  $display (" tst_write_random finished");
+  $display (" Total tests: %0d, failed tests: %0d", total-total_start, ugly-ugly_start);
+  $display ("-------------------------------------------------------------");
+
+endtask : tst_write_random
