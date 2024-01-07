@@ -41,6 +41,7 @@
  */
 localparam int AHB_ADDRESS_BOUNDARY = 1024;
 
+`define __DEBUG
 
 /* Error counter
  */
@@ -99,6 +100,32 @@ function automatic int hburst2int (input [HBURST_SIZE-1:0] hburst);
   endcase
 endfunction : hburst2int
 
+function automatic [HADDR_SIZE-1:0] hsize2adrmask (input [HSIZE_SIZE-1:0] hsize);
+  case (hsize)
+    HSIZE_B8   : hsize2adrmask = {HADDR_SIZE{1'b1}};
+    HSIZE_B16  : hsize2adrmask = {HADDR_SIZE{1'b1}} << 1;
+    HSIZE_B32  : hsize2adrmask = {HADDR_SIZE{1'b1}} << 2;
+    HSIZE_B64  : hsize2adrmask = {HADDR_SIZE{1'b1}} << 3;
+    HSIZE_B128 : hsize2adrmask = {HADDR_SIZE{1'b1}} << 4;
+    HSIZE_B256 : hsize2adrmask = {HADDR_SIZE{1'b1}} << 5;
+    HSIZE_B512 : hsize2adrmask = {HADDR_SIZE{1'b1}} << 6;
+    HSIZE_B1024: hsize2adrmask = {HADDR_SIZE{1'b1}} << 7;
+  endcase
+endfunction : hsize2adrmask
+
+function automatic [HADDR_SIZE-1:0] hsize2bytes (input [HSIZE_SIZE-1:0] hsize);
+  case (hsize)
+    HSIZE_B8   : hsize2bytes = 1;
+    HSIZE_B16  : hsize2bytes = 2;
+    HSIZE_B32  : hsize2bytes = 4;
+    HSIZE_B64  : hsize2bytes = 8;
+    HSIZE_B128 : hsize2bytes = 16;
+    HSIZE_B256 : hsize2bytes = 32;
+    HSIZE_B512 : hsize2bytes = 64;
+    HSIZE_B1024: hsize2bytes = 128;
+  endcase
+endfunction : hsize2bytes
+
 
 
 /* -- SDRAM Access routines
@@ -116,18 +143,8 @@ task automatic write_sdram_seq(
   static logic [HDATA_SIZE-1:0]       wbuf[];
 
   //create write buffer
-  case (burst)
-    HBURST_SINGLE: burstsize = 1;
-    HBURST_INCR  : burstsize = 128;
-    HBURST_WRAP4 : burstsize = 4;
-    HBURST_INCR4 : burstsize = 4;
-    HBURST_WRAP8 : burstsize = 8;
-    HBURST_INCR8 : burstsize = 8;
-    HBURST_WRAP16: burstsize = 16;
-    HBURST_INCR16: burstsize = 16;
-  endcase
+  burstsize = hburst2int(burst);
   wbuf = new[burstsize];
-
 
   //start at address 0
   adr = 0;
@@ -169,16 +186,7 @@ endtask : write_sdram_seq
     static logic [HDATA_SIZE-1:0]       rbuf[];
 
     //create read buffer
-    case (burst)
-      HBURST_SINGLE: burstsize = 1;
-      HBURST_INCR  : burstsize = 128;
-      HBURST_WRAP4 : burstsize = 4;
-      HBURST_INCR4 : burstsize = 4;
-      HBURST_WRAP8 : burstsize = 8;
-      HBURST_INCR8 : burstsize = 8;
-      HBURST_WRAP16: burstsize = 16;
-      HBURST_INCR16: burstsize = 16;
-    endcase
+    burstsize = hburst2int(burst);
     rbuf = new[burstsize];
 
 
@@ -264,7 +272,10 @@ task tst_compare (
   for (int adr=start_address; adr < end_address; adr++)
   begin
       test_buffer_address = adr / (SDRAM_DQ_SIZE/8);
+
+`ifdef __DEBUG
 //      $display ("adr=%h, buffer_adr=%h, sdram_adr=%h", adr, test_buffer_address, adr >> SDRAM_DSIZE >> 1);
+`endif
 
       test_buffer_value = test_buffer[test_buffer_address][(adr % (SDRAM_DQ_SIZE / 8)) *8 +: 8];
       sdram_value       = peek_sdram(adr)[(adr % (2 << SDRAM_DSIZE)) *8 +: 8];
@@ -360,7 +371,8 @@ endtask : tst_write_sequential
 
 // write random data
 task tst_write_random (
-  input int runs
+  input int runs,
+  input int haddr_range
 );
   logic [HADDR_SIZE -1:0] haddr;
   logic [HSIZE_SIZE -1:0] hsize;
@@ -395,9 +407,12 @@ task tst_write_random (
 
   for (run=0; run < runs; run++)
   begin
-      haddr  = $urandom();
+      haddr  = $urandom_range(0, haddr_range);
       hsize  = $urandom_range(0, $clog2(HDATA_SIZE/8));
       hburst = $urandom();
+
+      //haddr must align with hsize
+      haddr &= hsize2adrmask(hsize);
 
       //Ignore incrementing bursts
       if (hburst == HBURST_INCR) hburst++;
@@ -422,15 +437,24 @@ task tst_write_random (
 
       //write values to testbuffer
       for (int beat=0; beat < beats; beat++)
-      for (int b=0; b < HDATA_SIZE/8; b++)
       begin
-          offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize) +b) & adr_mask)
-                              : haddr + (beat << hsize) +b;
-          test_buffer[offset / (SDRAM_DQ_SIZE/8)][ (offset % (SDRAM_DQ_SIZE/8)) *8 +: 8] = $urandom();
+          for (int b=0; b < hsize2bytes(hsize); b++)
+          begin
+              offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize) +b) & adr_mask)
+                                  : haddr + (beat << hsize) +b;
+              test_buffer[offset / (SDRAM_DQ_SIZE/8)][ (offset % (SDRAM_DQ_SIZE/8)) *8 +: 8] = $urandom();
+          end
+
+`ifdef __DEBUG
+          offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize)) & adr_mask)
+                              : haddr + (beat << hsize);
+          $display("test_buffer[%0h]:%0h", offset, test_buffer[offset / (SDRAM_DQ_SIZE/8)]);
+`endif
       end
 
-
-//      $display ("tst_write_random; hsize=%3b, hburst=%3b, haddr=%h", hsize, hburst, haddr);
+`ifdef __DEBUG
+      $display ("tst_write_random; hsize=%3b, hburst=%3b, haddr=%h", hsize, hburst, haddr);
+`endif
 
       //write values to SDRAM (controller)
       tst_write(AHB_CTRL_PORT, haddr, hsize, hburst);
@@ -444,7 +468,7 @@ task tst_write_random (
   repeat (50+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
 
   //check results
-  tst_compare(0, 4*1024*1024); //FIXME
+  tst_compare(0, haddr_range);
 
   $display ("-------------------------------------------------------------");
   $display (" tst_write_random finished");
