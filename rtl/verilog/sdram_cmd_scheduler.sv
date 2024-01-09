@@ -373,6 +373,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_WR;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
+    sdram_nxt_ba        = ba;
     sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
@@ -412,6 +413,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_RD;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
+    sdram_nxt_ba        = ba;
     sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
