@@ -757,7 +757,7 @@ generate
         if (!rst_ni) wrrdy_o[port] <= 1'b0;
         else
         case (wrrdy_o[port])
-          1'b0: if ((port == wrport) && active_wr && xfer_cnt_last_burst)
+          1'b0: if ((port == wrport) && active_wr && xfer_cnt_last_burst && !refresh_now)
                   wrrdy_o[port] <= 1'b1;
 
           1'b1: wrrdy_o[port] <= 1'b0;
