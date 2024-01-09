@@ -199,7 +199,7 @@ import sdram_ctrl_pkg::*;
   logic [                3:0] tRC_cnt;                 //REF-to-REF/ACT-to-ACT
   logic                       tRC_load;
   logic                       tRC_done;
-  logic [                3:0] tWR_cnt        [BANKS];  //Last data to Precharge
+  logic [                5:0] tWR_cnt        [BANKS];  //Last data to Precharge
   logic [                5:0] tWR_load_val;
   logic [BANKS          -1:0] tWR_load;
   logic [BANKS          -1:0] tWR_done;
@@ -290,9 +290,8 @@ import sdram_ctrl_pkg::*;
     tRP_load_val        = { {$bits(tRP_cnt[0])-$bits(csr_i.timing.tRP){1'b0}}, csr_i.timing.tRP };
     tRCD_load           = {BANKS{1'b0}};
     tRC_load            = 1'b0;
-    tWR_load_val        = (1 << csr_i.ctrl.burst_size)
-                          + csr_i.timing.tWR
-                          + 1'h0;
+    tWR_load_val        = (1'h1 << csr_i.ctrl.burst_size)
+                          + csr_i.timing.tWR;
     tWR_load            = {BANKS{1'b0}};
     burst_cnt_load      = 1'b0;
     xfer_cnt_ld         = 1'b0;
@@ -421,7 +420,7 @@ import sdram_ctrl_pkg::*;
 //and CAS Latency -1 cycles before last burst
 //or  interrupted by read or write (with or without auto precharge)
     tRP_load_val        = tRAS_cnt[port]
-                          + (1 << csr_i.ctrl.burst_size) - (csr_i.timing.cl -1'h1)
+                          + (1'h1 << csr_i.ctrl.burst_size) - (csr_i.timing.cl -1'h1)
                           + csr_i.timing.tRP;
     bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
 
@@ -858,7 +857,7 @@ endgenerate
 
 
                  //any refreshes to service?
-                 if (|refreshes_pending && &tRP_done && tRC_done && xfer_cnt_done)
+                 if (|refreshes_pending && &tRP_done && tRC_done && &tRAS_done && xfer_cnt_done)
                  begin
                      if      ( bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
                      else if (&tWR_done                           ) cmd_pre_all_task();
@@ -933,7 +932,7 @@ endgenerate
                  if (refresh_now && &tRP_done && tRC_done)
                  begin
                      if (bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
-                     else if (&tWR_done)
+                     else if (&tWR_done && &tRAS_done)
                      begin
                          cmd_pre_all_task();
                          nxt_state = ST_REF;
