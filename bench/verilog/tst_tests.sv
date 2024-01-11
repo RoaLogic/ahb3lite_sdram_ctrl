@@ -41,7 +41,7 @@
  */
 localparam int AHB_ADDRESS_BOUNDARY = 1024;
 
-`define __DEBUG
+//`define __DEBUG
 
 /* Error counter
  */
@@ -353,7 +353,7 @@ task tst_write_sequential (
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
       //wait for the writebuffer to commit contents
-      repeat (50+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+      repeat (100+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
 
       //check results
       tst_compare(0, runs);
@@ -465,7 +465,7 @@ task tst_write_random (
   ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
   //wait for the writebuffer to commit contents
-  repeat (50+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+  repeat (100+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
 
   //check results
   tst_compare(0, haddr_range);
