@@ -361,6 +361,7 @@ module sdram_ahb_if
       input                         dirty;
       input                         wrrdy;
       input [WRBUFFER_TAG_SIZE-1:0] tag;
+      input                         hreadyout_value;
 
       if (!dirty || wrrdy) //other buffer clean?
       begin
@@ -369,8 +370,9 @@ module sdram_ahb_if
       end
       else //other buffer not clean; wait for it to be processed
       begin
-          //previous flush not serviced yet, insert wait states
-          hreadyout_wr = 1'b0;
+          //previous flush not serviced yet, insert wait states if there's
+	  //a new AHB write transaction pending
+          hreadyout_wr = hreadyout_value;
 
           //wait for previous request to be serviced
           wr_nxt_state = wr_wait;
@@ -561,12 +563,14 @@ module sdram_ahb_if
                      if (writebuffer_flush)
                        flush(writebuffer_dirty[~pingpong],
                              wrrdy_i,
-                             writebuffer_tag  [ pingpong]);
+                             writebuffer_tag  [ pingpong],
+                             1'b0);
                  end
                  else if (writebuffer_timer_expired) //timer expired
                    flush(writebuffer_dirty[~pingpong],
                          wrrdy_i,
-                         writebuffer_tag  [ pingpong]);
+                         writebuffer_tag  [ pingpong],
+                         1'b1);
 
         //wait for pending wrreq to complete
         wr_wait: if (wrrdy_i)
