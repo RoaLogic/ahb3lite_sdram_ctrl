@@ -11,7 +11,7 @@
 //                                                                //
 ////////////////////////////////////////////////////////////////////
 //                                                                //
-//     Copyright (C) 2023 ROA Logic BV                            //
+//     Copyright (C) 2023-2024 ROA Logic BV                       //
 //     www.roalogic.com                                           //
 //                                                                //
 //     This source file may be used and distributed without       //
@@ -36,11 +36,6 @@
 //                                                                //
 ////////////////////////////////////////////////////////////////////
 
-
-  //-------------------------------------------------------
-  //
-  // Tasks
-  //
 
   // -- SDRAM Controller Configuration routines
   //
