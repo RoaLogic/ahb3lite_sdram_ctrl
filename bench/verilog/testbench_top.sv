@@ -10,7 +10,7 @@
 //                                                                //
 ////////////////////////////////////////////////////////////////////
 //                                                                //
-//     Copyright (C) 2023 ROA Logic BV                            //
+//     Copyright (C) 2023-2024 ROA Logic BV                       //
 //     www.roalogic.com                                           //
 //                                                                //
 //     This source file may be used and distributed without       //
@@ -46,7 +46,7 @@ import ahb3lite_pkg::*;
 
   parameter int  AHB_PORTS            = 1;
   parameter int  AHB_CTRL_PORT        = 0;
-  parameter int  HADDR_SIZE           = 23;
+  parameter int  HADDR_SIZE           = 23; //SDRAM_BANK_BITS + SDRAM_COLS + SDRAM_ROWS + $clog2(SDRAM_DQ_SIZE/8)
   parameter int  HDATA_SIZE           = 32;
 
   parameter int  PADDR_SIZE           =  4;
@@ -177,7 +177,7 @@ import ahb3lite_pkg::*;
     $display (" `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---' ");
     $display ("- SDRAM Controller Testbench ------------  `---'  ----------");
     $display ("-------------------------------------------------------------");
-    $display ("  Done; Tests=%0d, failed=%0d", total, ugly);
+    $display ("  Done; Tests=%0d, Failed=%0d", total, ugly);
     $display ("  Status = %s", ugly ? "FAILED" : "PASSED");
     $display ("-------------------------------------------------------------");
   endtask
@@ -376,6 +376,8 @@ endgenerate
  
   initial
   begin
+      static int haddr_range = 2**(2 + SDRAM_COLS+SDRAM_ROWS + $clog2(SDRAM_DQ_SIZE/8) - SDRAM_DSIZE - 1);
+
       //wait for PCLK reset
       @(posedge PRESETn);
 
@@ -384,17 +386,18 @@ endgenerate
       wait_for_init_done();
       initialise_sdram_ctrl();
 
-      tst_write_sequential(4*1024 * 1024);
+//      tst_write_sequential(haddr_range,0);        //sequential addresses, sequential data
+//      tst_write_sequential(haddr_range,1);        //sequential addresses, random data
+//      tst_write_random(haddr_range, haddr_range); //random hburst, hsize, haddr, hwdata
+
+      tst_read_sequential(10, 0);
+//      read_sdram_seq(HSIZE_B32, HBURST_SINGLE, 5);
+//      read_sdram_seq(HSIZE_B16, HBURST_INCR4,  2);
 
       //idle AHB bus
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
-
       repeat (100) @(posedge HCLK);
-
-//      read_sdram_seq(HSIZE_B8,  HBURST_SINGLE, 5);
-//      read_sdram_seq(HSIZE_B32, HBURST_SINGLE, 5);
-//      read_sdram_seq(HSIZE_B16, HBURST_INCR4,  2);
 
       goodbye_msg();
 
