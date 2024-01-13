@@ -11,7 +11,7 @@
 //                                                                //
 ////////////////////////////////////////////////////////////////////
 //                                                                //
-//     Copyright (C) 2023 ROA Logic BV                            //
+//     Copyright (C) 2023-2024 ROA Logic BV                       //
 //     www.roalogic.com                                           //
 //                                                                //
 //     This source file may be used and distributed without       //
@@ -48,7 +48,33 @@ task sdram_clear;
 endtask : sdram_clear
 
 
-//Convert bus-address to SDRAM bank, row, column
+task sdram_fill_sequential;
+  logic [SDRAM_DQ_SIZE-1:0] tmp_buf;
+
+  for (int i=0; i < 2**(2+SDRAM_ROWS+SDRAM_COLS); i=i+(2 << SDRAM_DSIZE) )
+  begin
+      //create sequence
+      for (int b=0; b < (2 << SDRAM_DSIZE); b++)
+         tmp_buf[b*8 +: 8] = i+b;
+
+      //write value to SDRAM
+      poke_sdram(i, tmp_buf, {(2 << SDRAM_DSIZE){1'b1}});
+  end
+endtask : sdram_fill_sequential
+
+
+task sdram_fill_random;
+  for (int i=0; i < 2**(2+SDRAM_ROWS+SDRAM_COLS); i=i+(2 << SDRAM_DSIZE) )
+  begin
+      //write value to SDRAM
+      poke_sdram(i, $urandom, {(2 << SDRAM_DSIZE){1'b1}});
+  end
+endtask : sdram_fill_random
+
+
+
+/* Convert bus-address to SDRAM bank, row, column
+ */
 function automatic [2 + SDRAM_ROWS + SDRAM_COLS -1:0] map_haddr_to_sdram_address (
   input  [HADDR_SIZE-1:0] haddr
 );
@@ -82,9 +108,14 @@ function automatic [2 + SDRAM_ROWS + SDRAM_COLS -1:0] map_haddr_to_sdram_address
 endfunction : map_haddr_to_sdram_address
 
 
-//Peek inside SDRAM and return value at address 'haddr'
+
+/* Peek inside SDRAM and return value at address 'haddr'
+ * There is no translation from HDATA to SDRAM_DQ.
+ * I.e. there is no translation when HDATA_SIZE != SDRAM_DQ_SIZE.
+ * That must be done at a higher level
+ */
 function automatic [SDRAM_DQ_SIZE-1:0] peek_sdram (
-  input  [HADDR_SIZE   -1:0] haddr
+  input [HADDR_SIZE-1:0] haddr
 );
     logic [1:0] bank;
     logic [SDRAM_COLS + SDRAM_ROWS -1:0] sdram_address;
@@ -101,3 +132,34 @@ function automatic [SDRAM_DQ_SIZE-1:0] peek_sdram (
       2'b11: peek_sdram = sdram_memory.Bank3[sdram_address];
     endcase
 endfunction : peek_sdram
+
+
+/* Poke inside SDRAM and write value at address 'haddr'
+ * There is no translation from HDATA to SDRAM_DQ.
+ * I.e. there is no translation when HDATA_SIZE != SDRAM_DQ_SIZE.
+ * That must be done at a higher level
+ */
+task automatic poke_sdram (
+  input [HADDR_SIZE     -1:0] haddr,
+  input [SDRAM_DQ_SIZE  -1:0] data,
+  input [SDRAM_DQ_SIZE/8-1:0] be
+);
+    logic [1:0] bank;
+    logic [SDRAM_COLS + SDRAM_ROWS -1:0] sdram_address;
+
+    //map address
+    {bank, sdram_address} = map_haddr_to_sdram_address(haddr);
+//    $display("haddr=%h, bank=%d, sdram_address=%h, data=%h", haddr, bank, sdram_address, data);
+
+    for (int b=0; b < SDRAM_DQ_SIZE/8; b++)
+      if (be[b])
+      begin
+          //write memory contents
+          case (bank)
+            2'b00: sdram_memory.Bank0[sdram_address][b*8 +: 8] = data[b*8 +: 8];
+            2'b01: sdram_memory.Bank1[sdram_address][b*8 +: 8] = data[b*8 +: 8];
+            2'b10: sdram_memory.Bank2[sdram_address][b*8 +: 8] = data[b*8 +: 8];
+            2'b11: sdram_memory.Bank3[sdram_address][b*8 +: 8] = data[b*8 +: 8];
+          endcase
+      end
+endtask : poke_sdram
