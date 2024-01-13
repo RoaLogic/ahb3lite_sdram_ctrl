@@ -682,7 +682,7 @@ module sdram_ahb_if
     if (rdfifo_rreq_dly)
     begin
         if (beat_size < (csr_i.ctrl.dqsize +1'h1))
-          HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((rd_idx_dly*8) >> beat_size);// (8*rd_idx_dly) % (1 << beat_size) );
+          HRDATA[(beat_addr % (HDATA_SIZE/8)) *8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((beat_addr & ((2'h2 << csr_i.ctrl.dqsize) -1'h1)) *8);
         else
           HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q;
     end
