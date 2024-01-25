@@ -155,6 +155,7 @@ module sdram_ahb_if
   localparam WRBUFFER_TAG_SIZE = HADDR_SIZE - WRBUFFER_ADR_BITS;
 
   localparam HDATA_BYTES_BITS  = $clog2(HDATA_BYTES);
+  localparam SDRAM_DQ_BITS     = $clog2(SDRAM_DQ_SIZE);
   localparam HBURST_MAX        = 16;
 
   //ReadBuffer-size = max(SDRAM_BURST_SIZE_MAX * SDRAM_DQ_SIZE, HBURST_MAX * HDATA_SIZE)
@@ -299,8 +300,8 @@ module sdram_ahb_if
   logic                         beat_write,
                                 beat_read;
   logic [HSIZE_SIZE       -1:0] beat_size;
+  logic [HBURST_SIZE      -1:0] beat_burst;
   logic [HDATA_BYTES_BITS -1:0] beat_addr;
-  logic [                  3:0] beat_cnt;
 
 
   //Write
@@ -326,10 +327,11 @@ module sdram_ahb_if
   logic                         rdfifo_rreq, rdfifo_rreq_dly;
   logic                         rdfifo_empty;
   logic [SDRAM_DQ_SIZE    -1:0] rdfifo_q;
-  logic [HDATA_BYTES_BITS -1:0] rd_idx, rd_idx_dly;
+  logic [SDRAM_DQ_BITS    -1:0] rdfifo_cnt;
   logic [                  3:0] rd_burst_cnt;
   logic                         rd_burst_done;
   logic [HDATA_SIZE       -1:0] hrdata;
+  logic [HDATA_BYTES_BITS -1:0] hrdata_idx;
 
 
   //FSM encoding
@@ -420,7 +422,11 @@ module sdram_ahb_if
     if (HREADY) beat_size <= HSIZE;
 
   always @(posedge HCLK)
+    if (HREADY) beat_burst <= HBURST;
+
+  always @(posedge HCLK)
     if (HREADY) beat_addr <= HADDR[0 +: HDATA_BYTES_BITS];
+
 
   assign writebuffer_we = beat_write & hreadyout_wr_reg;
 
@@ -627,64 +633,124 @@ module sdram_ahb_if
  *  111   128
  *
  */
+
+/*
+ * if (beat_size < (csr_i.ctrl.dqsize + 1'h1))
+ *   //sdram provides more data than required in a beat
+ *   if (beat_burst == HBURST_SINGLE)
+ *     //sdram_dq contains all data -> hreadyout=1
+ *   else
+ *     //this is a burst, sdram_dq may(!) contain data for more than 1 beat
+ *     //figure out where we start in sdram_dq rdfifo_cnt = beat_addr % (csr_i.ctrl.dqsize + 1'h1)
+ *     //No misaligned addresses: hrdata can not straddle/cross sdram_dq boundary (good) .. hreadyout=1
+ *     //rdfifo_cnt+=(1 << beat_size)
+ *     //if (rdfifo_cnt - (1 << beat_size) == (csr_i.ctrl.dqsize + 1'h1)) rdfifo_rreq=1, rdfifo_cnt=0;
+ *  else
+ *     //sdram provides partial beat data. Need to stich multiple fifo_q bytes together to form hrdata
+ *     //No misaligned addresses, always consume full sdram_dq (good)
+ *     //rdfifo_cnt = 0
+ *     //rdfifo_rreq=1, rdfifo_cnt+=(2'h2 << csr_i.ctrl.dqsize)
+ *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
+ */
+
   always_comb
     begin
         rdfifo_rreq = 1'b0;
 
-        if (!rdfifo_empty)
-        begin
-            if (beat_size <= (csr_i.ctrl.dqsize +1'h1))
-//              rdfifo_rreq = rd_idx % (1'h1 << beat_size) == 0; //read once every dqsize/beat_size
-              rdfifo_rreq = ~|(rd_idx & ~({$bits(rd_idx){1'b1}} << beat_size));
-            else
-              rdfifo_rreq = 1'b1;
-        end
-    end
-
-  always @(posedge HCLK, negedge HRESETn)
-    if (!HRESETn)
-    begin
-        rd_idx           <= {$bits(rd_idx){1'b0}};
-        hreadyout_hrdata <= 1'b0;
-    end
-    else
-    if (!rdfifo_empty)
-    begin
-        if (beat_size <= (csr_i.ctrl.dqsize +1'h1))
+        if (beat_size < csr_i.ctrl.dqsize +1'h1)
         begin
             //sdram provides more data than needed in a single beat
-            rd_idx           <= rd_idx + (1'h1 << beat_size);
-            hreadyout_hrdata <= 1'b1;
+
+            if (beat_burst == HBURST_SINGLE && !rdfifo_empty) rdfifo_rreq = 1'b1;
+            else if (!rd_burst_done && !rdfifo_empty)
+            begin
+                if (rdfifo_cnt == (2'h2 << csr_i.ctrl.dqsize) -1'h1) rdfifo_rreq = 1'b1;
+            end
         end
         else
         begin
             //sdram provides partial data needed in a single beat
-            //SDRAM provides multiples of 16bits
-            rd_idx           <= rd_idx + (2'h2 << csr_i.ctrl.dqsize);
-            hreadyout_hrdata <= rd_idx == beat_size;
+            //need to stich multiple fifo-data bytes together to form HRDATA
+            if (!rd_burst_done && !rdfifo_empty) rdfifo_rreq = 1'b1;
+        end
+    end
+
+
+  always @(posedge HCLK)
+    if (beat_size < csr_i.ctrl.dqsize +1'h1)
+    begin
+        //sdram provides more data than needed in a single beat
+
+        if (beat_burst == HBURST_SINGLE)
+        begin
+            //single transfer, whatever is in the FIFO is it
+            if (!rdfifo_empty) hreadyout_hrdata <= 1'b1;
+            else               hreadyout_hrdata <= 1'b0;
+        end
+        else if (!rd_burst_done && !rdfifo_empty)
+        begin
+            hreadyout_hrdata <= 1'b1;
+
+            //burst transfer, need to use the same fifo-data for multiple beats
+            if (rdfifo_cnt == (2'h2 << csr_i.ctrl.dqsize) -1'h1)
+              rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
+            else
+              rdfifo_cnt <= rdfifo_cnt + (1'h1 << beat_size);
+        end
+        else
+        begin
+            hreadyout_hrdata <= 1'b0;
+            rdfifo_cnt       <= beat_addr & ((2'h2 << csr_i.ctrl.dqsize) -1'h1);
         end
     end
     else
     begin
-        hreadyout_hrdata <= 1'b0;
-        rd_idx           <= {$bits(rd_idx){1'b0}};
+        //sdram provides partial data needed in a single beat
+        //need to stich multiple fifo-data bytes together to form HRDATA
+        if (!rd_burst_done)
+        begin
+            if (rdfifo_cnt == (1'h1 << beat_size))
+            begin
+                hreadyout_hrdata <= 1'b1;
+                rdfifo_cnt       <= {$bits(rdfifo_cnt){1'b0}};
+            end
+            else
+            begin
+                hreadyout_hrdata <= 1'b0;
+                rdfifo_cnt       <= rdfifo_cnt + (2'h2 << csr_i.ctrl.dqsize);
+            end
+        end
+        else
+        begin
+            hreadyout_hrdata <= 1'b0;
+            rdfifo_cnt       <= {$bits(rdfifo_cnt){1'b0}};
+        end
     end
 
 
   //1 cycle delay from rdfifo_rreq assertion until data is available
   always @(posedge HCLK)
-    rdfifo_rreq_dly <= rdfifo_rreq;
+    rdfifo_rreq_dly <= ~rdfifo_empty; //rdfifo_rreq;
+
 
   always @(posedge HCLK)
-    rd_idx_dly <= rd_idx;
+    if (!rdfifo_rreq_dly)
+      hrdata_idx <= beat_addr;
+    else if (beat_size < csr_i.ctrl.dqsize +1'h1)
+      hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
+    else
+      hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
 
+
+/* FIXME: beat_addr is 1 cycle too late
+ */
   always @(posedge HCLK)
     if (rdfifo_rreq_dly)
     begin
         if (beat_size < (csr_i.ctrl.dqsize +1'h1))
-          HRDATA[(beat_addr % (HDATA_SIZE/8)) *8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((beat_addr & ((2'h2 << csr_i.ctrl.dqsize) -1'h1)) *8);
+          HRDATA[hrdata_idx /*(beat_addr % (HDATA_SIZE/8))*/ *8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((hrdata_idx /*beat_addr*/ & ((2'h2 << csr_i.ctrl.dqsize) -1'h1)) *8);
         else
-          HRDATA[rd_idx_dly*8 +: SDRAM_DQ_SIZE] <= rdfifo_q;
+          HRDATA[hrdata_idx /*(beat_addr % (HDATA_SIZE/8))*/ *8 +: SDRAM_DQ_SIZE] <= rdfifo_q;
     end
 
 
@@ -692,13 +758,13 @@ module sdram_ahb_if
   always @(posedge HCLK)
     if (rdreq)
     begin
-        rd_burst_cnt  <= hburst2cnt(HBURST) -1'h1;
-        rd_burst_done <= HBURST == HBURST_SINGLE;
+        rd_burst_cnt  <= {$bits(rd_burst_cnt){1'b0}};
+        rd_burst_done <= beat_burst == HBURST_SINGLE; //1'b0;
     end
     else if (!rd_burst_done && hreadyout_hrdata)
     begin
-        rd_burst_cnt  <= rd_burst_cnt -1'h1;
-        rd_burst_done <= rd_burst_cnt == 1'h1;
+        rd_burst_cnt  <= rd_burst_cnt +1'h1;
+        rd_burst_done <= rd_burst_cnt == hburst2int(beat_burst) -2'h2;
     end
 
 
@@ -742,7 +808,7 @@ module sdram_ahb_if
         rd_start  : if (rdrdy_i)
                     begin
                         rdadr  = HADDR;
-                        rdsize = sdram_read_xfercnt(HBURST, HSIZE, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
+                        rdsize = sdram_read_xfercnt(beat_burst, beat_size, csr_i.ctrl.dqsize) -1'h1; //do the -1 here
 
                         if (csr_i.ctrl.mode != 2'b00)
                         begin
