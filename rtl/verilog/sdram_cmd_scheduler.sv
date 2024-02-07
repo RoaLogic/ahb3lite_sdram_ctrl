@@ -237,7 +237,8 @@ import sdram_ctrl_pkg::*;
   logic [                5:0] burst_cnt_wr2rd;         //Number of cycles when a RD can be issues after a WR
   logic                       burst_cnt_wr2rd_done;
 
-  //Oops incomplete transfer.
+  //Oops incomplete transfer
+  logic                       xfer_incomplete;
   logic [PORTS_BITS     -1:0] xfer_incomplete_port;
   logic [                4:0] xfer_incomplete_size;
   logic [                1:0] xfer_incomplete_ba;
@@ -726,15 +727,16 @@ endgenerate
     /* Handle incomplete reads
        This can happen when a readburst doesn't start at a burst boundary and the xfer-size > burst-size
      */
+    always @(posedge clk_i, negedge rst_ni)
+      if      (!rst_ni             ) xfer_incomplete <= 1'b0;
+      else if ( xfer_cnt_ld        ) xfer_incomplete <= 1'b0;
+      else if ( xfer_cnt_last_burst) xfer_incomplete <= xfer_cnt > burst_cnt;
+
     always @(posedge clk_i)
-      if (xfer_cnt_ld) //remove request immediately after the read has been issued
-      begin
-          xfer_incomplete_size <= {$bits(xfer_incomplete_size){1'b0}};
-      end
-      else if (xfer_cnt_last_burst)
+      if (xfer_cnt_last_burst)
       begin
           xfer_incomplete_port <= active_port;
-          xfer_incomplete_size <= xfer_cnt > burst_cnt ? xfer_cnt - burst_cnt -1'h1 : {$bits(xfer_incomplete_size){1'b0}};
+          xfer_incomplete_size <= xfer_cnt - burst_cnt -1'h1;
           xfer_incomplete_ba   <= rdba_i [active_port];
       end
 
@@ -962,7 +964,7 @@ endgenerate
 
 
                  //any incomplete reads?
-                 if (burst_cnt_done && |xfer_incomplete_size)
+                 if (burst_cnt_done && xfer_incomplete)
                  begin
                      cmd_rd_task(xfer_incomplete_port,
                                  xfer_incomplete_ba,
