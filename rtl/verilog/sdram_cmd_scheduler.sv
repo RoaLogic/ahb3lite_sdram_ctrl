@@ -237,6 +237,10 @@ import sdram_ctrl_pkg::*;
   logic [                5:0] burst_cnt_wr2rd;         //Number of cycles when a RD can be issues after a WR
   logic                       burst_cnt_wr2rd_done;
 
+  //Oops incomplete transfer.
+  logic [PORTS_BITS     -1:0] xfer_incomplete_port;
+  logic [                4:0] xfer_incomplete_size;
+  logic [                1:0] xfer_incomplete_ba;
 
   logic [PORTS          -1:0] rdreq_nowbr,
                               rdreq_nowbr_act_bank;
@@ -428,7 +432,7 @@ import sdram_ctrl_pkg::*;
 
     xfer_cnt_ld         = 1'b1;
     xfer_cnt_ld_val     = rdsize;
-    active_nxt_port     = port; //rdport;
+    active_nxt_port     = port;
     active_nxt_rd       = 1'b1;
   endtask
 
@@ -501,7 +505,6 @@ generate
         end
 
       //tWR
-//      assign tWR_load = sdram_dqoe_o;
       always @(posedge clk_i, negedge rst_ni)
         if (!rst_ni)
         begin
@@ -716,7 +719,24 @@ endgenerate
         xfer_col            <=   sdram_nxt_col + 1'h1; //use dedicated sdram_nxt_col to reduce critical path
     end
 
+    //terminate burst
     assign burst_terminate = xfer_cnt_done & ~burst_cnt_done;
+
+
+    /* Handle incomplete reads
+       This can happen when a readburst doesn't start at a burst boundary and the xfer-size > burst-size
+     */
+    always @(posedge clk_i)
+      if (xfer_cnt_ld) //remove request immediately after the read has been issued
+      begin
+          xfer_incomplete_size <= {$bits(xfer_incomplete_size){1'b0}};
+      end
+      else if (xfer_cnt_last_burst)
+      begin
+          xfer_incomplete_port <= active_port;
+          xfer_incomplete_size <= xfer_cnt > burst_cnt ? xfer_cnt - burst_cnt -1'h1 : {$bits(xfer_incomplete_size){1'b0}};
+          xfer_incomplete_ba   <= rdba_i [active_port];
+      end
 
 
   /* RDRDY
@@ -939,6 +959,20 @@ endgenerate
                      end
                      else cmd_none_task(); //clear previous commands, ensure we can precharge
                  end
+
+
+                 //any incomplete reads?
+                 if (burst_cnt_done && |xfer_incomplete_size)
+                 begin
+                     cmd_rd_task(xfer_incomplete_port,
+                                 xfer_incomplete_ba,
+                                 xfer_col,
+                                 xfer_incomplete_size,
+                                 csr_i.ctrl.ap,
+                                 csr_i.ctrl.dqsize,
+                                 1'b1);
+                 end
+
              end
 
           { 2'b00,ST_REF }: if (tRP_done[0]) cmd_ref_task();
