@@ -719,6 +719,11 @@ endgenerate
 //        xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
         xfer_col            <=   sdram_nxt_col + 1'h1; //use dedicated sdram_nxt_col to reduce critical path
     end
+    else
+    begin
+        xfer_cnt_done       <= 1'b1;
+        xfer_cnt_last_burst <= 1'b0;
+    end
 
     //terminate burst
     assign burst_terminate = xfer_cnt_done & ~burst_cnt_done;
@@ -946,7 +951,9 @@ endgenerate
                          if (tRP_done[rdba_i[rdport]] && tRC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
                      end
                      //Precharge bank
-                     else if (tRAS_done[rdba_i[rdport]] && tWR_done[rdba_i[wrport]]) cmd_pre_task(rdba_i[rdport]);
+                     else if (tRAS_done[rdba_i[rdport]] && tWR_done[rdba_i[wrport]] &&
+                              (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
+                             ) cmd_pre_task(rdba_i[rdport]);
                  end
 
 
