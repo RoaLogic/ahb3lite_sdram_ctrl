@@ -301,7 +301,7 @@ module sdram_ahb_if
     wrapped = offset_plus_xfers > (1'h1 << burst_size);
 
     sdram_rd_xfer_break = wrapped & |offset;
-$display("haddr=%0h, offset=%0h, offset+xfers=%0x, wrapped=%0h, break=%b", haddr, offset, offset_plus_xfers, wrapped, sdram_rd_xfer_break);
+//$display("haddr=%0h, offset=%0h, offset+xfers=%0x, wrapped=%0h, break=%b", haddr, offset, offset_plus_xfers, wrapped, sdram_rd_xfer_break);
   endfunction : sdram_rd_xfer_break
 
 
@@ -330,7 +330,7 @@ $display("haddr=%0h, offset=%0h, offset+xfers=%0x, wrapped=%0h, break=%b", haddr
 
     //get the total number of required sdram transactions
     sdram_burst_total = sdram_rd_xfer_total_cnt(haddr, hburst, hsize, dqsize);
-$display("total=%0d", sdram_burst_total);
+//$display("total=%0d", sdram_burst_total);
 
     //will we roll-over (sdram burst)?
     if (sdram_rd_xfer_break(haddr, hburst, hsize, dqsize, burst_size))
@@ -433,7 +433,7 @@ $display("total=%0d", sdram_burst_total);
                                 nxt_pingpong;
 
   //Read
-  logic                         rdfifo_rreq, rdfifo_rreq_dly;
+  logic                         rdfifo_rreq;
   logic                         rdfifo_empty;
   logic [SDRAM_DQ_SIZE    -1:0] rdfifo_q;
   logic [SDRAM_DQ_BITS    -1:0] rdfifo_cnt;
@@ -866,14 +866,9 @@ $display("total=%0d", sdram_burst_total);
     end
 
 
-  //1 cycle delay from rdfifo_rreq assertion until data is available
-//  always @(posedge HCLK)
-//    rdfifo_rreq_dly <= ~rdfifo_empty; //rdfifo_rreq;
-assign rdfifo_rreq_dly = ~rdfifo_empty;
-
   //which byte in HRDATA
   always @(posedge HCLK)
-    if (!rdfifo_rreq_dly)
+    if (rdfifo_empty)
       hrdata_idx <= beat_addr[0 +: HDATA_BYTES_BITS];
     else if (beat_size < csr_i.ctrl.dqsize +1'h1)
       hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
@@ -883,7 +878,7 @@ assign rdfifo_rreq_dly = ~rdfifo_empty;
 
   //assign HRDATA
   always @(posedge HCLK)
-    if (rdfifo_rreq_dly)
+    if (!rdfifo_empty)
     begin
         if (beat_size < (csr_i.ctrl.dqsize +1'h1))
           HRDATA[hrdata_idx *8 +: SDRAM_DQ_SIZE] <= rdfifo_q >> ((hrdata_idx & ((2'h2 << csr_i.ctrl.dqsize) -1'h1)) *8);
@@ -894,10 +889,10 @@ assign rdfifo_rreq_dly = ~rdfifo_empty;
 
   //read burst counter
   always @(posedge HCLK)
-    if (rdreq && beat_trans != HTRANS_SEQ)
+    if (HREADY && HTRANS == HTRANS_NONSEQ)
     begin
-        rd_burst_cnt  <= hburst2int(beat_burst) -1'h1;
-        rd_burst_done <= beat_burst == HBURST_SINGLE;
+        rd_burst_cnt  <= hburst2int(HBURST) -1'h1;
+        rd_burst_done <= HBURST == HBURST_SINGLE;
     end
     else if (!rd_burst_done && hreadyout_hrdata)
     begin
