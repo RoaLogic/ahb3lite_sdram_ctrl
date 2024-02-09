@@ -820,12 +820,12 @@ module sdram_ahb_if
 
 
   always @(posedge HCLK)
-    if (beat_size == csr_i.ctrl.dqsize +1'h1)
+    if (HSIZE/*beat_size*/ == csr_i.ctrl.dqsize +1'h1)
     begin
         //sdram provides exactly the required amount of data for a single beat
         rdfifo_cnt = {$bits(rdfifo_cnt){1'b0}};
     end
-    else if (beat_size < csr_i.ctrl.dqsize +1'h1)
+    else if (HSIZE/*beat_size*/ < csr_i.ctrl.dqsize +1'h1)
     begin
         //sdram provides more data than needed in a single beat
 
@@ -839,9 +839,9 @@ module sdram_ahb_if
             else
               rdfifo_cnt <= rdfifo_cnt - (1'h1 << beat_size);
         end
-        else
+        else if (HREADY && HTRANS == HTRANS_NONSEQ)
         begin
-            rdfifo_cnt <= ((2'h2 << csr_i.ctrl.dqsize) -1'h1) - (beat_addr[0 +: HDATA_BYTES_BITS] & ((2'h2 << csr_i.ctrl.dqsize) -1'h1));
+            rdfifo_cnt <= ((2'h2 << csr_i.ctrl.dqsize) -1'h1) - (/*beat_addr*/HADDR[0 +: HDATA_BYTES_BITS] & ((2'h2 << csr_i.ctrl.dqsize) -1'h1));
         end
     end
     else
@@ -868,13 +868,15 @@ module sdram_ahb_if
 
   //which byte in HRDATA
   always @(posedge HCLK)
-    if (rdfifo_empty)
-      hrdata_idx <= beat_addr[0 +: HDATA_BYTES_BITS];
-    else if (beat_size < csr_i.ctrl.dqsize +1'h1)
+    if (HREADY && HTRANS == HTRANS_NONSEQ/*rdfifo_empty*/)
+      hrdata_idx <= /*beat_addr*/HADDR[0 +: HDATA_BYTES_BITS];
+    else if (!rdfifo_empty)
+    begin
+    /*else*/ if (beat_size < csr_i.ctrl.dqsize +1'h1)
       hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
     else
       hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
-
+    end
 
   //assign HRDATA
   always @(posedge HCLK)
