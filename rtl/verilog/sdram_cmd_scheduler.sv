@@ -920,7 +920,9 @@ endgenerate
                          if (tRP_done[wrba_i[wrport]] && tRC_done) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
                      end
                      //Precharge bank
-                     else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]]) cmd_pre_task(wrba_i[wrport]);
+                     else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]] &&
+                              (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
+                             ) cmd_pre_task(wrba_i[wrport]);
                  end
 
 
