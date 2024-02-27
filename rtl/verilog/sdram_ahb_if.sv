@@ -276,10 +276,9 @@ module sdram_ahb_if
     int totalbytes           = hburst2int(hburst) << hsize;
 
     //convert total number of required bytes to sdram transaction count
-    sdram_rd_xfer_total_cnt  = totalbytes/2 >> dqsize;            //sdram is minimal 2bytes wide
+    sdram_rd_xfer_total_cnt  = max(1, totalbytes/2 >> dqsize);     //sdram is minimal 2bytes wide
 
-//    if (!ahb_wrap_burst)
-      sdram_rd_xfer_total_cnt += haddr & ~((2'h2 << dqsize) -1'h1) !=0 ? 1'h1 : 1'h0;
+    sdram_rd_xfer_total_cnt += haddr & ~((2'h2 << dqsize) -1'h1) !=0 ? 1'h1 : 1'h0;
   endfunction : sdram_rd_xfer_total_cnt
 
 
