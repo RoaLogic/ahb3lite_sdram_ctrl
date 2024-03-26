@@ -69,10 +69,10 @@ package sdram_ctrl_pkg;
                            //01: 2
                            //10: 4
                            //11: 8
-    logic [1:0] cols;      //00: 8 cols
-                           //01: 9 cols
-                           //10:10 cols
-                           //11:11 cols
+    logic [1:0] cols;      //00: 8 columns
+                           //01: 9 columns
+                           //10:10 columns
+                           //11:11 columns
     logic       iam;       //0:linear bank addressing
                            //1:interleaved bank addressing
     logic       ap;        //auto-precharge on read/write
