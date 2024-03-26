@@ -270,7 +270,7 @@ module sdram_ahb_if
     input [            1:0] dqsize;
 
     //Is this an AHB wrap burst?
-    logic ahb_wrap_burst     = ~hburst[0];
+    logic ahb_wrap_burst     = ahb_is_wrap_burst(hburst);
 
     //get the total number of burst transactions
     int totalbytes           = hburst2int(hburst) << hsize;
@@ -291,40 +291,51 @@ module sdram_ahb_if
     input [HSIZE_SIZE -1:0] hsize;
     input [            1:0] dqsize;
     input [            1:0] burst_size;
+    input [            1:0] columns;
     input [           10:0] xfer_cnt_total;
 
     logic        ahb_wrap_burst;
     logic [10:0] xfers;
     logic [ 2:0] offset;
     logic [11:0] offset_plus_xfers;
+    logic [11:0] column_address;
     logic        wrapped;
 
     //what's the total number of SDRAM transfers
     xfers = xfer_cnt_total; //sdram_rd_xfer_total_cnt(haddr, hburst, hsize, dqsize);
 
     //Is this an AHB wrap burst?
-    ahb_wrap_burst = ~hburst[0];
+    ahb_wrap_burst = ahb_is_wrap_burst(hburst);
 
     //AHB INCR burst: get SDRAM offset (in column)
     //AHB WRAP burst: get column start address
     offset = ahb_wrap_burst ? haddr >> (dqsize + 1'h1)
                             : sdram_xfer_burst_offset(haddr, dqsize, burst_size);
 
-    //then add how many xfers in the column (starting at offset)
+    //add how many xfers in the column (starting at offset)
     offset_plus_xfers = offset + xfers;
 
-    //then check if we rolled/wrapped over the SDRAM burst
-    wrapped = offset_plus_xfers > (1'h1 << burst_size);
+    //check if we rolled/wrapped over the SDRAM burst size
+    wrapped = (offset_plus_xfers > (1'h1 << burst_size));
 
-    //check if this is an AHB Wrap Burst and the transfer matches the SDRAM burst
-    //if it does, clear wrapped
-    wrapped &= ~( ahb_wrap_burst & (xfers == (1'h1 << burst_size)) );
+    //addition AHB Incremental Burst checks
+    if (~ahb_wrap_burst)
+    begin
+        //clear wrapped if the offset==0
+        wrapped &= |offset;
+
+        //check if we rolled/wrapped over the SDRAM column boundary
+        column_address = (haddr >> (dqsize + 1'h1)) & ((1'h1 << (4'h8 + columns)) -1'h1);
+        wrapped |= (column_address + xfers) > (1'h1 << (4'h8 + columns));
+    end
+
+    //Clear wrapped if this is an AHB Wrap Burst and the transfer matches the SDRAM burst
+    wrapped &= ~(ahb_wrap_burst & (xfers == (1'h1 << burst_size)) );
 
 
-    sdram_rd_xfer_break = ahb_wrap_burst ? wrapped
-                                         : wrapped & |offset;
+    sdram_rd_xfer_break = wrapped;
 
-//$display("haddr=%0h, offset=%0h, xfers=%0d, offset+xfers=%0x, wrapped=%0h, break=%b", haddr, offset, xfers, offset_plus_xfers, wrapped, sdram_rd_xfer_break);
+//$display("sdram_rd_xfer_brk: haddr=%0h, xfers=%0d, offset=%0h, offset+xfers=%0h, columns=%0d, column_address=%0h, column_address+xfers=%0h, hburst=%0d, ahb_wrap=%0d, wrapped=%0h, break=%b", haddr, xfers, offset, offset_plus_xfers, columns, column_address, column_address + xfers, hburst, ahb_wrap_burst, wrapped, sdram_rd_xfer_break);
   endfunction : sdram_rd_xfer_break
 
 
@@ -338,11 +349,14 @@ module sdram_ahb_if
     input [HSIZE_SIZE -1:0] hsize;
     input [            1:0] dqsize;
     input [            1:0] burst_size;
+    input [            1:0] columns;
     input [           10:0] xfer_cnt_total;
 
     logic                   ahb_wrap_burst;
     logic [           10:0] ahb_burst_until_wrap;
     logic [            2:0] sdram_burst_offset;
+    logic [           11:0] sdram_burst_until_column_wrap;
+    logic [            3:0] sdram_burst_until_burst_wrap;
     logic [            3:0] sdram_burst_until_wrap;
     logic [           10:0] sdram_burst_total;
     logic [           10:0] sdram_burst_actual;
@@ -351,16 +365,21 @@ module sdram_ahb_if
     int totalbytes = hburst2int(hburst) << hsize;
 
     //is this an AHB wrap burst?
-    ahb_wrap_burst = ~hburst[0];
+    ahb_wrap_burst = ahb_is_wrap_burst(hburst); //~hburst[0] & |hburst[2:1];
 
     //get the SDRAM burst offset
     sdram_burst_offset = sdram_xfer_burst_offset(haddr, dqsize, burst_size);
 
     //get the total number of required sdram transactions
-    sdram_burst_total = xfer_cnt_total; //sdram_rd_xfer_total_cnt(haddr, hburst, hsize, dqsize);
+    sdram_burst_total = xfer_cnt_total;
 
     //get the number of SDRAM transactions until the SDRAM-burst rolls over
-    sdram_burst_until_wrap = (1'h1 << burst_size) - sdram_burst_offset;
+    sdram_burst_until_burst_wrap = (1'h1 << burst_size) - sdram_burst_offset;
+
+    //get the number of SDRAM transactions until the SDRAM column rolls over
+    sdram_burst_until_column_wrap = (1'h1 << (4'h8 + columns)) - sdram_burst_offset;
+
+    sdram_burst_until_wrap = min(sdram_burst_until_burst_wrap, sdram_burst_until_column_wrap);
 
     //get the number of SDRAM transactions until the AHB address rolls over
     ahb_burst_until_wrap = (totalbytes/2 >> dqsize) - sdram_burst_offset;
@@ -369,14 +388,14 @@ module sdram_ahb_if
       sdram_burst_until_wrap = min(sdram_burst_until_wrap, ahb_burst_until_wrap);
 
     //will the sdram-burst roll-over (sdram burst)?
-    if (sdram_rd_xfer_break(haddr, hburst, hsize, dqsize, burst_size, sdram_burst_total))
+    if (sdram_rd_xfer_break(haddr, hburst, hsize, dqsize, burst_size, columns, sdram_burst_total))
       sdram_burst_actual = min(sdram_burst_until_wrap, sdram_burst_total);
     else
       sdram_burst_actual = sdram_burst_total;
 
     //transfer count
     sdram_rd_xfer_cnt = sdram_burst_actual;
-//$display("haddr=%0h, offset=%0h, burstsize=%0d, ahb_burst_until_wrap=%0d, sdram_burst_until_wrap=%0d, burst_total=%0d, burst_actual=%0d @%0t", haddr, sdram_burst_offset, (1 << burst_size), ahb_burst_until_wrap, sdram_burst_until_wrap, sdram_burst_total, sdram_burst_actual, $time);
+//$display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, ahb_burst_until_wrap=%0d, sdram_burst_until_wrap=%0d, burst_total=%0d, burst_actual=%0d @%0t", haddr, hburst, sdram_burst_offset, (1 << burst_size), ahb_burst_until_wrap, sdram_burst_until_wrap, sdram_burst_total, sdram_burst_actual, $time);
   endfunction : sdram_rd_xfer_cnt
 
 
@@ -390,6 +409,7 @@ module sdram_ahb_if
     input [            1:0] burst_size;
 
     logic                   ahb_wrap_burst;
+    logic [           10:0] ahb_burst_until_wrap;
     logic [           10:0] address_mask;
     logic [            2:0] sdram_burst_offset;
     logic [            3:0] sdram_burst_until_wrap;
@@ -398,13 +418,16 @@ module sdram_ahb_if
     int totalbytes = hburst2int(hburst) << hsize;
 
     //Is this an AHB Wrap Burst?
-    ahb_wrap_burst = ~hburst[0];
+    ahb_wrap_burst = ahb_is_wrap_burst(hburst);
 
     //get the SDRAM burst offset
     sdram_burst_offset = sdram_xfer_burst_offset(haddr, dqsize, burst_size) + xfer_size;
 
-    //get the number of transaction until we roll over
+    //get the number of transaction until the sdram roll over
     sdram_burst_until_wrap = (1'h1 << burst_size) - sdram_burst_offset;
+
+    //get the number of SDRAM transactions until the AHB address rolls over
+    ahb_burst_until_wrap = (totalbytes/2 >> dqsize) - sdram_burst_offset;
 
     //calculate next read address
     sdram_rd_nxt_radr = (haddr & ({{HADDR_SIZE-1{1'b1}}, 1'b0} << dqsize)) + (2'h2 << dqsize) * xfer_size; //sdram_burst_until_wrap;
@@ -415,7 +438,7 @@ module sdram_ahb_if
         sdram_rd_nxt_radr = (haddr & ~address_mask) | (sdram_rd_nxt_radr & address_mask);
     end
 
-//$display("haddr=%0h, xfer_size=%0d, mask=%0h, nxtadr=%0h, sbuw=%0d, dqsize=%2h", haddr, xfer_size, address_mask, sdram_rd_nxt_radr, sdram_burst_until_wrap, dqsize);
+//$display("sdram_rd_nxt_radr: haddr=%0h, hburst=%0d, xfer_size=%0d, mask=%0h, nxtadr=%0h, abuw=%0d, sbuw=%0d, dqsize=%2h", haddr, hburst, xfer_size, address_mask, sdram_rd_nxt_radr, ahb_burst_until_wrap, sdram_burst_until_wrap, dqsize);
   endfunction : sdram_rd_nxt_radr
 
 
@@ -823,25 +846,30 @@ module sdram_ahb_if
  *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
  */
 
+  logic gate_rdfifo_rreq;
+  always @(posedge HCLK)
+    gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending;
+
   always_comb
     begin
         rdfifo_rreq = 1'b0;
 
+//        if (!gate_rdfifo_rreq)
         if (beat_size < csr_i.ctrl.dqsize +1'h1)
         begin
             //sdram provides more data than needed in a single beat
 
             if (beat_burst == HBURST_SINGLE && !rdfifo_empty) rdfifo_rreq = 1'b1;
-            else if (/*!rd_burst_done &&*/ !rdfifo_empty)
+            else if (/*!(HREADY && HTRANS==HTRANS_NONSEQ && rd_state==rd_pending)*/ !gate_rdfifo_rreq && !rdfifo_empty)
             begin
-                if (rdfifo_cnt == 0) /*(2'h2 << csr_i.ctrl.dqsize) -1'h1)*/ rdfifo_rreq = 1'b1;
+                if (rdfifo_cnt == 0) rdfifo_rreq = 1'b1;
             end
         end
         else
         begin
             //sdram provides partial data needed in a single beat
             //need to stich multiple fifo-data bytes together to form HRDATA
-            if (!rdfifo_empty) rdfifo_rreq = 1'b1;
+            if (/*!(HREADY && HTRANS==HTRANS_NONSEQ && rd_state==rd_pending)*/ !gate_rdfifo_rreq && !rdfifo_empty) rdfifo_rreq = 1'b1;
         end
     end
 
@@ -875,63 +903,91 @@ module sdram_ahb_if
 
 
   always @(posedge HCLK)
-    if (HSIZE/*beat_size*/ == csr_i.ctrl.dqsize +1'h1)
+    if (HREADY && HTRANS == HTRANS_NONSEQ)
     begin
-        //sdram provides exactly the required amount of data for a single beat
-        rdfifo_cnt = {$bits(rdfifo_cnt){1'b0}};
-    end
-    else if (HSIZE/*beat_size*/ < csr_i.ctrl.dqsize +1'h1)
-    begin
-        //sdram provides more data than needed in a single beat
-
-        if (!rdfifo_empty)
+        //set start value
+        if (HSIZE == csr_i.ctrl.dqsize + 1'h1)
         begin
-            //burst transfer, need to use the same fifo-data for multiple beats
-            if (rdfifo_cnt == 0)
-            begin
-                rdfifo_cnt <= (2'h2 << csr_i.ctrl.dqsize) -1'h1;
-            end
-            else
-              rdfifo_cnt <= rdfifo_cnt - (1'h1 << beat_size);
+            //sdram provides exactly the required amount of data for a single beat
+            rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
         end
-        else if (HREADY && HTRANS == HTRANS_NONSEQ)
+        else if (HSIZE < csr_i.ctrl.dqsize +1'h1)
         begin
-            rdfifo_cnt <= ((2'h2 << csr_i.ctrl.dqsize) -1'h1) - (/*beat_addr*/HADDR[0 +: HDATA_BYTES_BITS] & ((2'h2 << csr_i.ctrl.dqsize) -1'h1));
+            //sdram provides more data than needed in a single beat
+            rdfifo_cnt <= ((2'h2 << csr_i.ctrl.dqsize) -1'h1) - (HADDR[0 +: HDATA_BYTES_BITS] & ((2'h2 << csr_i.ctrl.dqsize) -1'h1));
+        end
+        else
+        begin
+            //sdram provides partial data needed in a single beat
+            //need to stich multiple fifo-data bytes together to form HRDATA
+            rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
         end
     end
     else
     begin
-        //sdram provides partial data needed in a single beat
-        //need to stich multiple fifo-data bytes together to form HRDATA
-        if (!(rd_burst_done && hreadyout_hrdata) && !rdfifo_empty)
+        //handle transactions
+        if (beat_size == csr_i.ctrl.dqsize +1'h1)
         begin
-            if (rdfifo_cnt == (1'h1 << (beat_size -1'h1)))
+            //sdram provides exactly the required amount of data for a single beat
+            //rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
+        end
+        else if (beat_size < csr_i.ctrl.dqsize +1'h1)
+        begin
+            //sdram provides more data than needed in a single beat
+            if (!rdfifo_empty)
             begin
-                rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
-            end
-            else
-            begin
-                rdfifo_cnt <= rdfifo_cnt + (2'h2 << csr_i.ctrl.dqsize);
+                //burst transfer, need to use the same fifo-data for multiple beats
+                if (rdfifo_cnt == 0)
+                begin
+                    rdfifo_cnt <= (2'h2 << csr_i.ctrl.dqsize) -1'h1;
+                end
+                else
+                  rdfifo_cnt <= rdfifo_cnt - (1'h1 << beat_size);
             end
         end
         else
         begin
-            rdfifo_cnt    <= {$bits(rdfifo_cnt){1'b0}};
+            //sdram provides partial data needed in a single beat
+            //need to stich multiple fifo-data bytes together to form HRDATA
+            if (!(rd_burst_done && hreadyout_hrdata) && !rdfifo_empty &&
+                  rdfifo_cnt != (1'h1 << (beat_size -1'h1))           )
+                rdfifo_cnt <= rdfifo_cnt + (2'h2 << csr_i.ctrl.dqsize);
+            else
+                rdfifo_cnt    <= {$bits(rdfifo_cnt){1'b0}};
         end
     end
 
 
   //which byte in HRDATA
   always @(posedge HCLK)
-    if (HREADY && HTRANS == HTRANS_NONSEQ/*rdfifo_empty*/)
-      hrdata_idx <= /*beat_addr*/HADDR[0 +: HDATA_BYTES_BITS];
+    if (!rdfifo_empty)
+    begin
+        if ((hreadyout_hrdata && rd_burst_done && HTRANS == HTRANS_NONSEQ) || gate_rdfifo_rreq)
+          hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
+        else
+        if (beat_size < csr_i.ctrl.dqsize +1'h1)
+          hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
+        else
+          hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
+    end
+    else
+    if (HREADY && HTRANS == HTRANS_NONSEQ)
+      hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
+
+/*
+  always @(posedge HCLK)
+    if (HREADY && HTRANS == HTRANS_NONSEQ)
+      hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
     else if (!rdfifo_empty)
     begin
-    /*else*/ if (beat_size < csr_i.ctrl.dqsize +1'h1)
-      hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
-    else
-      hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
+        if (beat_size < csr_i.ctrl.dqsize +1'h1)
+          hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
+        else
+          hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
     end
+*/
+
+
 
   //assign HRDATA
   always @(posedge HCLK)
@@ -959,7 +1015,6 @@ module sdram_ahb_if
 
 
   //Read FSM
-//FIXME: Wrap burst and burst not starting at ctrl.dqsize boundary
 //if (not ctrl.burst_size, HADDR/HBURST boundary)
 //    perform full burst --> rdsize = sdram_read_xfercnt()
 //else
@@ -1001,16 +1056,31 @@ module sdram_ahb_if
         rd_pending: begin
                         hreadyout_rd = hreadyout_hrdata;
 
-                        if (rdrdy_i)
+                        if (|rdsize_rem_reg)
                         begin
-                            rd_nxt_state = |rdsize_rem_reg ? rd_start : rd_final;
-                            rdreq        = |rdsize_rem_reg;
-                            rdadr        = rdadr_nxt_reg;
-                            rdsize       = beat_burst[0] ? rdsize_rem_reg
-                                                         : sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_rem_reg);
-                            rdsize_rem   = rdsize_rem_reg - rdsize;
-                            rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
-                            rdsize       = rdsize -1'h1;
+                            if (rdrdy_i)
+                            begin
+                                rd_nxt_state = rd_pending; //rd_start;
+                                rdreq        = 1'b1;
+                                rdadr        = rdadr_nxt_reg;
+                                rdsize       = /*beat_burst[0] ? rdsize_rem_reg
+                                                             :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
+                                rdsize_rem   = rdsize_rem_reg - rdsize;
+                                rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                rdsize       = rdsize -1'h1;
+                            end
+                        end
+                        else
+                        begin
+                            if (hreadyout_hrdata)
+                            begin
+                                rd_nxt_state = rd_final;
+                                rdreq        = rdreq_o & ~rdrdy_i; //??? not |rdsize_o!!
+                                rdadr        = rdadr_o;
+                                rdsize       = rdsize_o;
+                                rdsize_rem   = rdsize_rem_reg;
+                                rdadr_nxt    = rdadr_nxt_reg;
+                            end
                         end
                     end
 
@@ -1022,7 +1092,7 @@ module sdram_ahb_if
                         begin
                             rdadr  = rdadr_nxt_reg;
                             rdreq  = 1'b0;
-                            rdsize = sdram_rd_xfer_cnt(rdadr_o, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_rem_reg) -1'h1; //do the -1 here
+                            rdsize = sdram_rd_xfer_cnt(rdadr_o, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg) -1'h1; //do the -1 here
 
 //                            rd_nxt_state = sdram_rd_xfer_break(beat_addr, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size) ? rd_burst : rd_final;
                             rd_nxt_state = rd_final;
@@ -1055,9 +1125,9 @@ module sdram_ahb_if
                                 wbr          = writebuffer_flush;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
-                                rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_xfer_total);
+                                rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
-                                rdadr_nxt         = sdram_rd_nxt_radr(beat_addr, rdsize, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
                                 rdsize            = rdsize -1'h1;
                             end
                             else
@@ -1065,8 +1135,8 @@ module sdram_ahb_if
                                 rd_nxt_state = |rdsize_rem_reg ? rd_start : rd_final;
                                 rdreq        = |rdsize_rem_reg;
                                 rdadr        = rdadr_nxt_reg;
-                                rdsize       = beat_burst[0] ? rdsize_rem_reg
-                                                             : sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_rem_reg);
+                                rdsize       = /*beat_burst[0] ? rdsize_rem_reg
+                                                             :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
                                 rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
                                 rdsize       = rdsize -1'h1;
@@ -1084,7 +1154,7 @@ module sdram_ahb_if
                         rdreq             = 1'b1;
                         rdadr             = HADDR;
                         rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
-                        rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_xfer_total);
+                        rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                         rdsize_rem        = rdsize_xfer_total /*sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize)*/ - rdsize;
                         rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize,HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
                         rdsize            = rdsize -1'h1; //do the -1 here
