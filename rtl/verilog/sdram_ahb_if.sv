@@ -505,11 +505,10 @@ $display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, a
                                 nxt_pingpong;
 
   //Read
-  logic                         rdfifo_rreq;
+  logic                         rdfifo_rreq, gate_rdfifo_rreq;
   logic                         rdfifo_empty;
   logic [SDRAM_DQ_SIZE    -1:0] rdfifo_q;
   logic [SDRAM_DQ_BITS    -1:0] rdfifo_cnt;
-  logic [SDRAM_DQ_BITS    -1:0] rdfifo_cnt_ldval;
   logic [                  3:0] rd_burst_cnt;
   logic                         rd_burst_done;
   logic [HDATA_SIZE       -1:0] hrdata;
@@ -842,7 +841,6 @@ $display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, a
  *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
  */
 
-  logic gate_rdfifo_rreq;
   always @(posedge HCLK)
     gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending;
 
@@ -1112,7 +1110,7 @@ $display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, a
                                 rdreq        = 1'b0;
                                 hreadyout_rd = 1'b1;
                             end
-                            else if (ahb_read && rd_burst_done)
+                            else if (ahb_read && HTRANS == HTRANS_NONSEQ && rd_burst_done)
                             begin
                                 //this is the start of a new AHB burst
                                 rd_nxt_state = rd_pending;
