@@ -608,7 +608,8 @@ endgenerate
     end
     else if (burst_terminate)
     begin
-        burst_cnt_wr2rd <= csr_i.timing.cl -1'h1;
+        burst_cnt_wr2rd      <= csr_i.timing.cl -1'h1;
+	burst_cnt_wr2rd_done <= 1'b0;
     end
     else if (!burst_cnt_wr2rd_done)
     begin
@@ -626,12 +627,13 @@ endgenerate
     end
    else if (burst_cnt_load && active_nxt_rd)
     begin
-        burst_cnt_rd2wr      <= burst_cnt_int_val + csr_i.timing.cl + csr_i.timing.btac;
+        burst_cnt_rd2wr      <= burst_cnt_int_val + csr_i.timing.tRDV + csr_i.timing.cl + csr_i.timing.btac;
         burst_cnt_rd2wr_done <= 1'b0;
     end
     else if (burst_terminate)
     begin
-        burst_cnt_rd2wr <= csr_i.timing.cl + csr_i.timing.btac -1'h1;
+        burst_cnt_rd2wr      <= csr_i.timing.cl + csr_i.timing.tRDV + csr_i.timing.btac -1'h1;
+	burst_cnt_rd2wr_done <= 1'b0;
     end
     else if (!burst_cnt_rd2wr_done)
     begin
@@ -758,7 +760,7 @@ generate
         case (csr_i.ctrl.mode)
           2'b00: //normal mode
             case (rdrdy_o[port])
-              1'b0: if ( rdreq_nowbr[port] && (port == rdport) && /*active_rd &&*/ (
+              1'b0: if ( rdreq_nowbr[port] && (port == rdport) && active_rd && (
                            (                 xfer_cnt_last_burst                              ) ||
                            ( xfer_cnt_ld && (xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size)) )
                          ) )
@@ -895,15 +897,15 @@ endgenerate
                  //any reads with activated banks pending?
 
                  //any writes pending?
-                 if (|wrreq)
+                 if (|wrreq && !active_rd)
                  begin
                      //Is the bank actived with the correct row?
                      if (wrreq_bank_act[wrport])
                      begin
-                         if ( tRCD_done[wrba_i[wrport]] )
+                         if ( tRCD_done[wrba_i[wrport]])
                          begin
                              //Write
-                             if (burst_cnt_done || burst_terminate)
+                             if ((burst_cnt_done || burst_terminate) && burst_cnt_rd2wr_done)
                                cmd_wr_task(wrport,
                                            wrba_i [wrport],
                                            xfer_cnt_done ? wrcol_i[wrport] : xfer_col,
@@ -927,7 +929,7 @@ endgenerate
 
 
                  //any reads pending?
-                 if (|rdreq_nowbr)
+                 if (|rdreq_nowbr && !active_wr)
                  begin
                      //Is the bank actived with the correct row?
                      if (rdreq_nowbr_act_bank[rdport])
@@ -935,7 +937,7 @@ endgenerate
                          if (tRCD_done[rdba_i[rdport]] )
                          begin
                              //Read
-                             if (burst_cnt_done || burst_terminate)
+                             if (burst_cnt_done && burst_cnt_wr2rd_done)
                                 cmd_rd_task(rdport,
                                             rdba_i  [rdport],
                                             xfer_cnt_done ? rdcol_i[rdport] : xfer_col,
