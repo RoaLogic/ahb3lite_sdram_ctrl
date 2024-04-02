@@ -193,12 +193,18 @@ import sdram_ctrl_pkg::*;
   logic [                5:0] tRP_load_val;
   logic [BANKS          -1:0] tRP_load;
   logic [BANKS          -1:0] tRP_done;
-  logic [                3:0] tRCD_cnt       [BANKS];  //ACT-to-RD/WR (per bank);
+  logic [                2:0] tRCD_cnt       [BANKS];  //ACT-to-RD/WR (per bank);
   logic [BANKS          -1:0] tRCD_load;
   logic [BANKS          -1:0] tRCD_done;
-  logic [                3:0] tRC_cnt;                 //REF-to-REF/ACT-to-ACT
-  logic                       tRC_load;
-  logic                       tRC_done;
+  logic [                3:0] tRC_cnt        [BANKS];
+  logic [BANKS          -1:0] tRC_load;
+  logic [BANKS          -1:0] tRC_done;
+  logic [                2:0] tRRD_cnt;
+  logic                       tRRD_load;
+  logic                       tRRD_done;
+  logic [                3:0] tRFC_cnt;                //REF-to-REF/ACT-to-ACT
+  logic                       tRFC_load;
+  logic                       tRFC_done;
   logic [                5:0] tWR_cnt        [BANKS];  //Last data to Precharge
   logic [                5:0] tWR_load_val;
   logic [BANKS          -1:0] tWR_load;
@@ -294,7 +300,9 @@ import sdram_ctrl_pkg::*;
     tRP_load            = {BANKS{1'b0}};
     tRP_load_val        = { {$bits(tRP_cnt[0])-$bits(csr_i.timing.tRP){1'b0}}, csr_i.timing.tRP };
     tRCD_load           = {BANKS{1'b0}};
-    tRC_load            = 1'b0;
+    tRRD_load           = 1'b0;
+    tRC_load            = {BANKS{1'b0}};
+    tRFC_load           = 1'b0;
     tWR_load_val        = (1'h1 << csr_i.ctrl.burst_size)
                           + csr_i.timing.tWR;
     tWR_load            = {BANKS{1'b0}};
@@ -309,7 +317,7 @@ import sdram_ctrl_pkg::*;
 
     nxt_state     = ST_IDLE;
     sdram_nxt_cmd = CMD_REF;
-    tRC_load      = 1'b1;
+    tRFC_load     = 1'b1;
     refreshing    = 1'b1;
   endtask 
 
@@ -348,6 +356,8 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_ba        = ba;
     tRAS_load      [ba] = 1'b1;
     tRCD_load      [ba] = 1'b1;
+    tRC_load       [ba] = 1'b1;
+    tRRD_load           = 1'b1;
     bank_nxt_status[ba] = BANK_STATUS_ACTIVE;
     bank_nxt_row   [ba] = row;
   endtask
@@ -505,6 +515,26 @@ generate
             tRCD_done[bank] <= tRCD_cnt[bank] == 1'h1;
         end
 
+
+      //tRC
+      always @(posedge clk_i, negedge rst_ni)
+        if (!rst_ni)
+        begin
+            tRC_cnt [bank] <= {$bits(tRC_cnt[bank]){1'b0}};
+            tRC_done[bank] <= 1'b0;
+        end
+        else if (tRC_load[bank])
+        begin
+            tRC_cnt [bank] <=   csr_i.timing.tRC;
+            tRC_done[bank] <= ~|csr_i.timing.tRC;
+        end
+        else if (!tRC_done[bank])
+        begin
+            tRC_cnt [bank] <= tRC_cnt[bank] -1'h1;
+            tRC_done[bank] <= tRC_cnt[bank] == 1'h1;
+        end
+
+
       //tWR
       always @(posedge clk_i, negedge rst_ni)
         if (!rst_ni)
@@ -526,22 +556,41 @@ generate
   end
 endgenerate
 
-  //tRC
+  //tRRD
   always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
     begin
-        tRC_cnt  <= {$bits(tRC_cnt){1'b0}};
-        tRC_done <= 1'b0;
+        tRRD_cnt  <= {$bits(tRRD_cnt){1'b0}};
+        tRRD_done <= 1'b0;
     end
-    else if (tRC_load)
+    else if (tRRD_load)
     begin
-        tRC_cnt  <=   csr_i.timing.tRC;
-        tRC_done <= ~|csr_i.timing.tRC;
+        tRRD_cnt  <=   csr_i.timing.tRRD;
+        tRRD_done <= ~|csr_i.timing.tRRD;
     end
-    else if (!tRC_done)
+    else if (!tRFC_done)
     begin
-        tRC_cnt  <= tRC_cnt -1'h1;
-        tRC_done <= tRC_cnt == 1'h1;
+        tRRD_cnt  <= tRRD_cnt -1'h1;
+        tRRD_done <= tRRD_cnt == 1'h1;
+    end
+
+
+  //tRCF
+  always @(posedge clk_i, negedge rst_ni)
+    if (!rst_ni)
+    begin
+        tRFC_cnt  <= {$bits(tRFC_cnt){1'b0}};
+        tRFC_done <= 1'b0;
+    end
+    else if (tRFC_load)
+    begin
+        tRFC_cnt  <=   csr_i.timing.tRFC;
+        tRFC_done <= ~|csr_i.timing.tRFC;
+    end
+    else if (!tRFC_done)
+    begin
+        tRFC_cnt  <= tRFC_cnt -1'h1;
+        tRFC_done <= tRFC_cnt == 1'h1;
     end
 
 
@@ -851,7 +900,7 @@ endgenerate
         casex ( {csr_i.ctrl.mode, state} )
           { 2'b11,{$bits(state){1'bx}} }:
              //Set Mode Register Mode
-             if (rdreq_i[CTRL_PORT] && !rdrdy_o[CTRL_PORT] && tRC_done)
+             if (rdreq_i[CTRL_PORT] && !rdrdy_o[CTRL_PORT] && tRFC_done)
              begin
                  sdram_nxt_cmd      = CMD_MRS;
                  sdram_nxt_addr     = rdadr_i[CTRL_PORT][0 +: $bits(sdram_nxt_addr)];
@@ -862,7 +911,7 @@ endgenerate
 
           { 2'b10,{$bits(state){1'bx}} }:
              //Auto Refresh Mode
-             if (rdreq_i[CTRL_PORT] && ~rdrdy_o[CTRL_PORT] && tRP_done[CTRL_PORT] && tRC_done)
+             if (rdreq_i[CTRL_PORT] && ~rdrdy_o[CTRL_PORT] && tRP_done[CTRL_PORT] && tRFC_done)
              begin
                  cmd_ref_task();
                  rdrdy[CTRL_PORT] = 1'b1;
@@ -886,7 +935,7 @@ endgenerate
 
 
                  //any refreshes to service?
-                 if (|refreshes_pending && &tRP_done && tRC_done && &tRAS_done && xfer_cnt_done)
+                 if (|refreshes_pending && &tRP_done && tRFC_done && &tRAS_done && xfer_cnt_done)
                  begin
                      if      ( bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
                      else if (&tWR_done                           ) cmd_pre_all_task();
@@ -919,7 +968,9 @@ endgenerate
                      else if (bank_status[wrba_i[wrport]] == BANK_STATUS_IDLE)
                      begin
                          //Activate bank
-                         if (tRP_done[wrba_i[wrport]] && tRC_done) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
+                         if (tRP_done[wrba_i[wrport]] &&
+                             tRC_done[wrport] && tRRD_done &&
+                             tRFC_done) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]] &&
@@ -952,7 +1003,9 @@ endgenerate
                      else if (bank_status[rdba_i[rdport]] == BANK_STATUS_IDLE)
                      begin
                          //Activate bank
-                         if (tRP_done[rdba_i[rdport]] && tRC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
+                         if (tRP_done[rdba_i[rdport]] &&
+                             tRC_done[rdport] && tRRD_done &&
+                             tRFC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[rdba_i[rdport]] && tWR_done[rdba_i[wrport]] &&
@@ -962,7 +1015,7 @@ endgenerate
 
 
                  //any refreshes to service?
-                 if (refresh_now && &tRP_done && tRC_done)
+                 if (refresh_now && &tRP_done && tRFC_done)
                  begin
                      if (bank_status == BANK_STATUS_ALL_IDLE) cmd_ref_task();
                      else if (&tWR_done && &tRAS_done)
