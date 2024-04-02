@@ -77,35 +77,41 @@
   );
     //Write timing parameters into timing CSR
     logic [15:0] tREF_cnt;
-    logic [ 3:0] tWR_cnt;
-    logic [ 3:0] tRAS_cnt;
-    logic [ 3:0] tRP_cnt;
-    logic [ 3:0] tRCD_cnt;
-    logic [ 3:0] tRC_cnt;
     logic [ 2:0] tRDV_cnt;
+    logic [ 2:0] tRRD_cnt;
+    logic [ 2:0] tWR_cnt;
+    logic [ 2:0] tRP_cnt;
+    logic [ 2:0] tRCD_cnt;
+    logic [ 3:0] tRAS_cnt;
+    logic [ 3:0] tRC_cnt;
+    logic [ 3:0] tRFC_cnt;
     logic [31:0] regval;
 
     //get clk-period counts for each timing parameter
     tREF_cnt = refreshes / refresh_period / clk_period;
+    tRRD_cnt = get_t_period(tRRD, clk_period);
     tWR_cnt  = get_t_period(tWR,  clk_period);
     tRAS_cnt = get_t_period(tRAS, clk_period);
     tRP_cnt  = get_t_period(tRP,  clk_period);
     tRCD_cnt = get_t_period(tRCD, clk_period);
-    tRC_cnt  = get_t_period(tRFC > tRC ? tRFC : tRC,  clk_period);
+    tRC_cnt  = get_t_period(tRC,  clk_period);
+    tRFC_cnt = get_t_period(tRFC, clk_period);
 
     //Data valid at controller: PHY-delay (output + input) + PCB delay
     tRDV_cnt = 0 + 2 + get_t_period(1, clk_period);
 
     //register value
-    regval = {5'h0, tRDV_cnt, btac, 1'b0, cl, tWR_cnt, tRAS_cnt, tRP_cnt, tRCD_cnt, tRC_cnt};
+    regval = {2'h0, tRDV_cnt, btac, 1'b0, cl, tRRD_cnt, tWR_cnt, tRP_cnt, tRCD_cnt, tRAS_cnt, tRC_cnt, tRFC_cnt};
 
     //write regval to timing CSR
     $display("Writing timing CSR (0x%8h)", regval);
+    $display("  - tRFC=%0d (0x%0h)", tRFC_cnt, tRFC_cnt);
     $display("  - tRC =%0d (0x%0h)", tRC_cnt,  tRC_cnt);
     $display("  - tRCD=%0d (0x%0h)", tRCD_cnt, tRCD_cnt);
     $display("  - tRP =%0d (0x%0h)", tRP_cnt,  tRP_cnt);
     $display("  - tRAS=%0d (0x%0h)", tRAS_cnt, tRAS_cnt);
     $display("  - tWR =%0d (0x%0h)", tWR_cnt,  tWR_cnt);
+    $display("  - tRRD=%0d (0x%0h)", tRRD_cnt, tRRD_cnt);
     $display("  - cl  =%0d (%2b)", cl, cl);
     $display("  - btac=%0d      ", btac);
     $display("  - tRDV=%0d (0x%0h)", tRDV_cnt, tRDV_cnt);
