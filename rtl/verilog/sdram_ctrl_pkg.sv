@@ -86,18 +86,20 @@ package sdram_ctrl_pkg;
   } csr_ctrl_t;
  
   typedef struct packed {
-    logic [ 4:0] reserved31_27;
-    logic [ 2:0] tRDV;     //Read Command to data valid delay
-                           //This is the total delay from the command-out until the 
-                           //data is received. This includes PHY and PCB delays, but not CL
-    logic        btac;     //Bus Turnaround Cycle. Add an additional cycle between RD-to-WR commands
-    logic        reserved22;
-    logic [ 1:0] cl;       //cas latency; 00:reserved, 01:CL1, 10:CL2, 11:CL3
-    logic [ 3:0] tWR;      //Write Recovery period (~tDPL)
-    logic [ 3:0] tRAS;     //Command Period; ACT-to-PRE
-    logic [ 3:0] tRP;      //Precharge period; PRE-to-ACT
-    logic [ 3:0] tRCD;     //Active-to-Read/Write period
-    logic [ 3:0] tRC;      //Active-to-Active period =max(tRC,tRCF)
+    logic [ 1:0] reserved31_29;
+    logic [ 2:0] tRDV;     //28-30 Read Command to data valid delay
+                           //      This is the total delay from the command-out until the
+                           //      data is received. This includes PHY and PCB delays, but not CL
+    logic        btac;     //27    Bus Turnaround Cycle. Add an additional cycle between RD-to-WR commands
+    logic        reserved26;
+    logic [ 1:0] cl;       //24-25 cas latency; 00:reserved, 01:CL1, 10:CL2, 11:CL3
+    logic [ 2:0] tRRD;     //21-23 Active-to-Active period differen banks
+    logic [ 2:0] tWR;      //18-20 Write Recovery period (~tDPL)
+    logic [ 2:0] tRP;      //15-17 Precharge period; PRE-to-ACT
+    logic [ 2:0] tRCD;     //12-14 Active-to-Read/Write period
+    logic [ 3:0] tRAS;     // 8-11 Command period; ACT-to-PRE
+    logic [ 3:0] tRC;      // 4- 7 Active-to-Active period same bank
+    logic [ 3:0] tRFC;     // 0- 3 REF-to-REF period
   } csr_timing_t;
 
   typedef struct packed {
