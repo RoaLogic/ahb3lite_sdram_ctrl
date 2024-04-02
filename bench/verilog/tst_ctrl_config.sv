@@ -107,9 +107,9 @@
     $display("Writing timing CSR (0x%8h)", regval);
     $display("  - tRFC=%0d (0x%0h)", tRFC_cnt, tRFC_cnt);
     $display("  - tRC =%0d (0x%0h)", tRC_cnt,  tRC_cnt);
+    $display("  - tRAS=%0d (0x%0h)", tRAS_cnt, tRAS_cnt);
     $display("  - tRCD=%0d (0x%0h)", tRCD_cnt, tRCD_cnt);
     $display("  - tRP =%0d (0x%0h)", tRP_cnt,  tRP_cnt);
-    $display("  - tRAS=%0d (0x%0h)", tRAS_cnt, tRAS_cnt);
     $display("  - tWR =%0d (0x%0h)", tWR_cnt,  tWR_cnt);
     $display("  - tRRD=%0d (0x%0h)", tRRD_cnt, tRRD_cnt);
     $display("  - cl  =%0d (%2b)", cl, cl);
