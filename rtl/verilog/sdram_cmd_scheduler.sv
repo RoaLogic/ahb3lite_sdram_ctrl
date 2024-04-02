@@ -568,7 +568,7 @@ endgenerate
         tRRD_cnt  <=   csr_i.timing.tRRD;
         tRRD_done <= ~|csr_i.timing.tRRD;
     end
-    else if (!tRFC_done)
+    else if (!tRRD_done)
     begin
         tRRD_cnt  <= tRRD_cnt -1'h1;
         tRRD_done <= tRRD_cnt == 1'h1;
