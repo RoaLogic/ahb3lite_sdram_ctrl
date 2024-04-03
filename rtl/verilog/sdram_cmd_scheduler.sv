@@ -295,6 +295,8 @@ import sdram_ctrl_pkg::*;
       bank_nxt_row[bank] = bank_row[bank];
 
     refreshing          = 1'b0;
+    active_nxt_wr       = 1'b0;
+    active_nxt_rd       = 1'b0;
 
     tRAS_load           = {BANKS{1'b0}};
     tRP_load            = {BANKS{1'b0}};
@@ -889,8 +891,8 @@ endgenerate
     begin
         cmd_none_task();
         active_nxt_port     = active_port & ~{$bits(active_port){xfer_cnt_done}};
-        active_nxt_rd       = active_rd & ~xfer_cnt_done;
-        active_nxt_wr       = active_wr & ~xfer_cnt_done;
+//        active_nxt_rd       = active_rd & ~xfer_cnt_done;
+//        active_nxt_wr       = active_wr & ~xfer_cnt_done;
 
         for (int port = 0; port < PORTS; port++)
         begin
@@ -968,9 +970,11 @@ endgenerate
                      else if (bank_status[wrba_i[wrport]] == BANK_STATUS_IDLE)
                      begin
                          //Activate bank
-                         if (tRP_done[wrba_i[wrport]] &&
-                             tRC_done[wrport] && tRRD_done &&
-                             tRFC_done) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
+                         if ( tRP_done[wrba_i[wrport]]      &&
+                              tRC_done[wrport] && tRRD_done &&
+                              tRFC_done                     &&
+                             !(bank_status[rdba_i[rdport]] == BANK_STATUS_ACTIVE && !tRCD_done[rdba_i[rdport]])
+                            ) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]] &&
@@ -1076,8 +1080,8 @@ endgenerate
         bank_status  <= bank_nxt_status;
 
         active_port  <= active_nxt_port;
-        active_rd    <= active_nxt_rd;
-        active_wr    <= active_nxt_wr;
+        active_rd    <= (active_rd & ~xfer_cnt_done) | active_nxt_rd;
+        active_wr    <= (active_wr & ~xfer_cnt_done) | active_nxt_wr;
     end
 
 
@@ -1096,7 +1100,7 @@ endgenerate
 
   //DQoe
   always @(posedge clk_i)
-    sdram_dqoe <= active_nxt_wr & (burst_cnt_load | ~burst_cnt_done);
+    sdram_dqoe <= (active_wr | active_nxt_wr) & (burst_cnt_load | ~burst_cnt_done);
   assign sdram_dqoe_o = sdram_dqoe;
 
 
