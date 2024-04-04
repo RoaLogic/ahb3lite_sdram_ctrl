@@ -948,60 +948,67 @@ endgenerate
                  //any reads with activated banks pending?
 
                  //any writes pending?
-                 if (|wrreq && !active_rd)
+                 if (|wrreq)
                  begin
                      //Is the bank actived with the correct row?
                      if (wrreq_bank_act[wrport])
                      begin
-                         if ( tRCD_done[wrba_i[wrport]])
+                         if (!active_rd)
                          begin
-                             //Write
-                             if ((burst_cnt_done || burst_terminate) && burst_cnt_rd2wr_done)
-                               cmd_wr_task(wrport,
-                                           wrba_i [wrport],
-                                           xfer_cnt_done ? wrcol_i[wrport] : xfer_col,
-                                           csr_i.ctrl.ap,
-                                           csr_i.ctrl.dqsize,
-                                           xfer_cnt_last_burst);
+                             if ( tRCD_done[wrba_i[wrport]])
+                             begin
+                                 //Write
+                                 if ((burst_cnt_done || burst_terminate) && burst_cnt_rd2wr_done)
+                                   cmd_wr_task(wrport,
+                                               wrba_i [wrport],
+                                               xfer_cnt_done ? wrcol_i[wrport] : xfer_col,
+                                               csr_i.ctrl.ap,
+                                               csr_i.ctrl.dqsize,
+                                               xfer_cnt_last_burst);
+                             end
+                             else cmd_none_task(); //clear previous commands; prevent two actions fighting
                          end
-                         else cmd_none_task(); //clear previous commands; prevent two actions fighting
                      end
                      //Is the bank idle (precharged)?
                      else if (bank_status[wrba_i[wrport]] == BANK_STATUS_IDLE)
                      begin
-                         //Activate bank
+                         //Activate bank, except if a PRE/ACT for a READ is in progress
+                         //  in that case, wait and interleave the WRITE-ACT with the READ-NOPs
                          if ( tRP_done[wrba_i[wrport]]      &&
                               tRC_done[wrport] && tRRD_done &&
                               tRFC_done                     &&
-                             !(bank_status[rdba_i[rdport]] == BANK_STATUS_ACTIVE && !tRCD_done[rdba_i[rdport]])
+                             !(!tRP_done[rdba_i[rdport]] || !tRCD_done[rdba_i[rdport]])
                             ) cmd_act_task(wrba_i[wrport], wrrow_i[wrport]);
                      end
                      //Precharge bank
                      else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]] &&
-                              (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
+                              (burst_terminate || burst_cnt_done || wrba_i[wrport] != sdram_ba)
                              ) cmd_pre_task(wrba_i[wrport]);
                  end
 
 
                  //any reads pending?
-                 if (|rdreq_nowbr && !active_wr)
+                 if (|rdreq_nowbr)
                  begin
                      //Is the bank actived with the correct row?
                      if (rdreq_nowbr_act_bank[rdport])
                      begin
-                         if (tRCD_done[rdba_i[rdport]] )
+                         if (!active_wr)
                          begin
-                             //Read
-                             if (burst_cnt_done && burst_cnt_wr2rd_done)
-                                cmd_rd_task(rdport,
-                                            rdba_i  [rdport],
-                                            xfer_cnt_done ? rdcol_i[rdport] : xfer_col,
-                                            rdsize_i[rdport],
-                                            csr_i.ctrl.ap,
-                                            csr_i.ctrl.dqsize,
-                                            xfer_cnt_last_burst);
+                             if (tRCD_done[rdba_i[rdport]] )
+                             begin
+                                 //Read
+                                 if (burst_cnt_done && burst_cnt_wr2rd_done)
+                                    cmd_rd_task(rdport,
+                                                rdba_i  [rdport],
+                                                xfer_cnt_done ? rdcol_i[rdport] : xfer_col,
+                                                rdsize_i[rdport],
+                                                csr_i.ctrl.ap,
+                                                csr_i.ctrl.dqsize,
+                                                xfer_cnt_last_burst);
+                             end
+                             else cmd_none_task(); //clear previous commands; prevent two actions fighting
                          end
-                         else cmd_none_task(); //clear previous commands; prevent two actions fighting
                      end
                      //Is the bank idle (precharged)?
                      else if (bank_status[rdba_i[rdport]] == BANK_STATUS_IDLE)
