@@ -788,7 +788,7 @@ endgenerate
     always @(posedge clk_i, negedge rst_ni)
       if      (!rst_ni             ) xfer_incomplete <= 1'b0;
       else if ( xfer_cnt_ld        ) xfer_incomplete <= 1'b0;
-      else if ( xfer_cnt_last_burst) xfer_incomplete <= xfer_cnt > burst_cnt;
+      else if ( xfer_cnt_last_burst) xfer_incomplete <= active_rd & (xfer_cnt > burst_cnt);
 
     always @(posedge clk_i)
       if (xfer_cnt_last_burst)
