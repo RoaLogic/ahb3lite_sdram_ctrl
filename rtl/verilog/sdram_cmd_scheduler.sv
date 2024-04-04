@@ -847,17 +847,24 @@ endgenerate
 
   //write data/byte-enable transfer buffer
   always @(posedge clk_i)
-    if (wrreq_i[wrport] && xfer_cnt_done)
+    if ( !(active_wr | active_nxt_wr) & (burst_cnt_load | ~burst_cnt_done) )
     begin
-        xfer_dq_wbuf <=  wrd_i [wrport];
-        xfer_dm_wbuf <= ~wrbe_i[wrport];
+        //do not mask read transfers
+        xfer_dm_wbuf <= {$bits(xfer_dm_wbuf){1'b0}};
     end
     else
     begin
-        xfer_dq_wbuf <= xfer_dq_wbuf >> (5'd16 << csr_i.ctrl.dqsize);
-        xfer_dm_wbuf <= xfer_dm_wbuf >> (2'h2 << csr_i.ctrl.dqsize);
+        if (wrreq_i[wrport] && xfer_cnt_done)
+        begin
+            xfer_dq_wbuf <=  wrd_i [wrport];
+            xfer_dm_wbuf <= ~wrbe_i[wrport];
+        end
+        else
+        begin
+            xfer_dq_wbuf <= xfer_dq_wbuf >> (5'd16 << csr_i.ctrl.dqsize);
+            xfer_dm_wbuf <= xfer_dm_wbuf >> (2'h2 << csr_i.ctrl.dqsize);
+        end
     end
-
 
 
   /* Internal signals
