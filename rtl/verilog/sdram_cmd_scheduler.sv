@@ -1013,14 +1013,17 @@ endgenerate
                      //Is the bank idle (precharged)?
                      else if (bank_status[rdba_i[rdport]] == BANK_STATUS_IDLE)
                      begin
-                         //Activate bank
-                         if (tRP_done[rdba_i[rdport]] &&
-                             tRC_done[rdport] && tRRD_done &&
-                             tRFC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
+                         //Activate bank, can interleave with WR-NOPs
+                         if (!active_nxt_wr                 &&
+                              tRP_done[rdba_i[rdport]]      &&
+                              tRC_done[rdport] && tRRD_done &&
+                              tRFC_done) cmd_act_task(rdba_i[rdport], rdrow_i[rdport]);
                      end
-                     //Precharge bank
-                     else if (tRAS_done[rdba_i[rdport]] && tWR_done[rdba_i[wrport]] &&
-                              (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
+                     //Precharge bank, can interleave with WR-NOPs
+                     else if (!active_nxt_wr             &&
+                               tRAS_done[rdba_i[rdport]] &&
+                               tWR_done[rdba_i[wrport]]  &&
+                               (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
                              ) cmd_pre_task(rdba_i[rdport]);
                  end
 
