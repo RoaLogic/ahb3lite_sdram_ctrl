@@ -333,7 +333,7 @@ module sdram_ahb_if
     else
     begin
         //AHB Wrap Burst check
-        wrapped |= |offset;
+        wrapped = |(haddr & ((hburst2int(hburst) << hsize) -1'h1));
     end
 
     sdram_rd_xfer_break = wrapped;
