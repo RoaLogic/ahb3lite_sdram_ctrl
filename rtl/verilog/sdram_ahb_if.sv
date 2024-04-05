@@ -338,7 +338,7 @@ module sdram_ahb_if
 
     sdram_rd_xfer_break = wrapped;
 
-$display("sdram_rd_xfer_brk: haddr=%0h, xfers=%0d, offset=%0h, offset+xfers=%0h, columns=%0d, column_address=%0h, column_address+xfers=%0h, hburst=%0d, ahb_wrap=%0d, wrapped=%0h, break=%b", haddr, xfers, offset, offset_plus_xfers, columns, column_address, column_address + xfers, hburst, ahb_wrap_burst, wrapped, sdram_rd_xfer_break);
+//$display("sdram_rd_xfer_brk: haddr=%0h, xfers=%0d, offset=%0h, offset+xfers=%0h, columns=%0d, column_address=%0h, column_address+xfers=%0h, hburst=%0d, ahb_wrap=%0d, wrapped=%0h, break=%b", haddr, xfers, offset, offset_plus_xfers, columns, column_address, column_address + xfers, hburst, ahb_wrap_burst, wrapped, sdram_rd_xfer_break);
   endfunction : sdram_rd_xfer_break
 
 
@@ -375,16 +375,16 @@ $display("sdram_rd_xfer_brk: haddr=%0h, xfers=%0d, offset=%0h, offset+xfers=%0h,
 
     //get the total number of required sdram transactions
     sdram_burst_total = xfer_cnt_total;
-$display("sdram_burst_total=%0d", sdram_burst_total);
+//$display("sdram_burst_total=%0d", sdram_burst_total);
 
     //get the number of SDRAM transactions until the SDRAM-burst rolls over
     sdram_burst_until_burst_wrap = |sdram_burst_offset ? (1'h1 << burst_size) - sdram_burst_offset
                                                        : sdram_burst_total;
-$display("sdram_burst_until_burst_wrap=%0d", sdram_burst_until_burst_wrap);
+//$display("sdram_burst_until_burst_wrap=%0d", sdram_burst_until_burst_wrap);
 
     //get the number of SDRAM transactions until the SDRAM column rolls over
     sdram_burst_until_column_wrap = (1'h1 << (4'h8 + columns)) - ( (haddr >> (dqsize + 1'h1)) & ((1'h1 << (4'h8 + columns)) -1'h1) );
-$display("sdram_burst_until_column_wrap=%0d", sdram_burst_until_column_wrap);
+//$display("sdram_burst_until_column_wrap=%0d", sdram_burst_until_column_wrap);
 
     sdram_burst_until_wrap = min(sdram_burst_until_burst_wrap, sdram_burst_until_column_wrap);
 
@@ -403,7 +403,7 @@ $display("sdram_burst_until_column_wrap=%0d", sdram_burst_until_column_wrap);
 
     //transfer count
     sdram_rd_xfer_cnt = sdram_burst_actual;
-$display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, ahb_burst_until_wrap=%0d, sdram_burst_until_wrap=%0d, burst_total=%0d, burst_actual=%0d @%0t", haddr, hburst, sdram_burst_offset, (1 << burst_size), ahb_burst_until_wrap, sdram_burst_until_wrap, sdram_burst_total, sdram_burst_actual, $time);
+//$display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, ahb_burst_until_wrap=%0d, sdram_burst_until_wrap=%0d, burst_total=%0d, burst_actual=%0d @%0t", haddr, hburst, sdram_burst_offset, (1 << burst_size), ahb_burst_until_wrap, sdram_burst_until_wrap, sdram_burst_total, sdram_burst_actual, $time);
   endfunction : sdram_rd_xfer_cnt
 
 
@@ -766,8 +766,10 @@ $display("sdram_rd_xfer_cnt: haddr=%0h, hburst=%0d, offset=%0h, burstsize=%0d, a
                          1'b1);
 
         //wait for pending wrreq to complete
-        wr_wait: if (wrrdy_i)
-                  go_flush(writebuffer_tag[pingpong]);
+        wr_wait: begin
+                     if (HREADY && ahb_write) hreadyout_wr = 1'b0;
+                     if (wrrdy_i            ) go_flush(writebuffer_tag[pingpong]);
+                 end
       endcase
     end
 
