@@ -332,8 +332,8 @@ module sdram_ahb_if
     end
     else
     begin
-        //Clear wrapped if this is an AHB Wrap Burst and the transfer matches the SDRAM burst
-//        wrapped &= ~(xfers == (1'h1 << burst_size));
+        //AHB Wrap Burst check
+        wrapped |= |offset;
     end
 
     sdram_rd_xfer_break = wrapped;
