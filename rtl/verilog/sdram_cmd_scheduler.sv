@@ -260,11 +260,12 @@ import sdram_ctrl_pkg::*;
   logic [PORTS_BITS     -1:0] wrport;
   logic                       wr_pending;
 
-  states_t                    nxt_state,      state;
-  sdram_cmds_t                sdram_nxt_cmd,  sdram_cmd;
-  logic [SDRAM_ADDR_SIZE-1:0] sdram_nxt_addr, sdram_addr;
+  states_t                    nxt_state,         state;
+  sdram_cmds_t                sdram_nxt_cmd,     sdram_cmd;
+  logic [SDRAM_ADDR_SIZE-1:0] sdram_nxt_addr,    sdram_addr;
   logic [MAX_CSIZE      -1:0] sdram_nxt_col;
-  logic [SDRAM_BA_SIZE  -1:0] sdram_nxt_ba,   sdram_ba;
+  logic [SDRAM_BA_SIZE  -1:0] sdram_nxt_ba,      sdram_ba,
+                              sdram_nxt_rdwr_ba, sdram_rdwr_ba;
   logic [SDRAM_DQ_SIZE  -1:0] sdram_dq;
   logic [SDRAM_DQ_SIZE/8-1:0] sdram_dm;
   logic                       sdram_dqoe;
@@ -288,6 +289,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_cmd       = CMD_NOP;
     sdram_nxt_addr      = sdram_addr;
     sdram_nxt_ba        = sdram_ba;
+    sdram_nxt_rdwr_ba   = sdram_rdwr_ba;
     sdram_nxt_col       = {$bits(sdram_nxt_col){1'bx}};
     bank_nxt_status     = bank_status;
 
@@ -390,6 +392,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
     sdram_nxt_ba        = ba;
+    sdram_nxt_rdwr_ba   = ba;
     sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
@@ -430,6 +433,7 @@ import sdram_ctrl_pkg::*;
     sdram_nxt_addr      = col;
     sdram_nxt_addr [10] = go_ap;
     sdram_nxt_ba        = ba;
+    sdram_nxt_rdwr_ba   = ba;
     sdram_nxt_col       = col;
     tRP_load       [ba] = go_ap;
 //Calculate tRP
@@ -991,7 +995,7 @@ endgenerate
                      end
                      //Precharge bank
                      else if (tRAS_done[wrba_i[wrport]] && tWR_done[wrba_i[wrport]] &&
-                              (burst_terminate || burst_cnt_done || wrba_i[wrport] != sdram_ba)
+                              (burst_terminate || burst_cnt_done || wrba_i[wrport] != sdram_rdwr_ba)
                              ) cmd_pre_task(wrba_i[wrport]);
                  end
 
@@ -1032,7 +1036,7 @@ endgenerate
                      else if (!active_nxt_wr             &&
                                tRAS_done[rdba_i[rdport]] &&
                                tWR_done[rdba_i[wrport]]  &&
-                               (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_ba)
+                               (burst_terminate || burst_cnt_done || rdba_i[rdport] != sdram_rdwr_ba)
                              ) cmd_pre_task(rdba_i[rdport]);
                  end
 
@@ -1074,33 +1078,35 @@ endgenerate
   always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
     begin
-        state        <= ST_IDLE;
-        sdram_cmd    <= CMD_NOP;
-        sdram_addr   <= {$bits(sdram_addr){1'bx}};
-        sdram_ba     <= {$bits(sdram_ba  ){1'bx}};
+        state         <= ST_IDLE;
+        sdram_cmd     <= CMD_NOP;
+        sdram_addr    <= {$bits(sdram_addr   ){1'bx}};
+        sdram_ba      <= {$bits(sdram_ba     ){1'bx}};
+        sdram_rdwr_ba <= {$bits(sdram_rdwr_ba){1'bx}};
 
-        bank_row     <= '{'hx, 'hx, 'hx, 'hx};
-        bank_status  <= BANK_STATUS_ALL_IDLE;
+        bank_row      <= '{'hx, 'hx, 'hx, 'hx};
+        bank_status   <= BANK_STATUS_ALL_IDLE;
 
-        active_port  <= {$bits(active_port){1'b0}};
-        active_rd    <= 1'b0;
-        active_wr    <= 1'b0;
+        active_port   <= {$bits(active_port){1'b0}};
+        active_rd     <= 1'b0;
+        active_wr     <= 1'b0;
     end
     else
     begin
-        state        <= nxt_state;
-        sdram_cmd    <= sdram_nxt_cmd;
-        sdram_addr   <= sdram_nxt_addr;
-        sdram_ba     <= sdram_nxt_ba;
+        state         <= nxt_state;
+        sdram_cmd     <= sdram_nxt_cmd;
+        sdram_addr    <= sdram_nxt_addr;
+        sdram_ba      <= sdram_nxt_ba;
+        sdram_rdwr_ba <= sdram_nxt_rdwr_ba;
 
         for (int bank=0; bank < 4; bank++)
           bank_row[bank] <= bank_nxt_row[bank];
 
-        bank_status  <= bank_nxt_status;
+        bank_status   <= bank_nxt_status;
 
-        active_port  <= active_nxt_port;
-        active_rd    <= (active_rd & ~xfer_cnt_done) | active_nxt_rd;
-        active_wr    <= (active_wr & ~xfer_cnt_done) | active_nxt_wr;
+        active_port   <= active_nxt_port;
+        active_rd     <= (active_rd & ~xfer_cnt_done) | active_nxt_rd;
+        active_wr     <= (active_wr & ~xfer_cnt_done) | active_nxt_wr;
     end
 
 
