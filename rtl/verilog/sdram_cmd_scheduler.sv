@@ -811,10 +811,12 @@ generate
         case (csr_i.ctrl.mode)
           2'b00: //normal mode
             case (rdrdy_o[port])
-              1'b0: if ( rdreq_nowbr[port] && (port == rdport) && active_rd && (
+              1'b0: if ( rdreq_nowbr[port] && (port == rdport) && active_rd &&
+                         (
                            (                 xfer_cnt_last_burst                              ) ||
                            ( xfer_cnt_ld && (xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size)) )
-                         ) )
+                         )
+                       )
                       rdrdy_o[port] <= 1'b1;
 
               1'b1: rdrdy_o[port] <= 1'b0;
