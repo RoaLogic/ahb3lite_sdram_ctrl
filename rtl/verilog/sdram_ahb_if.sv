@@ -650,7 +650,7 @@ module sdram_ahb_if
     if (HREADY)
       wr_idx <= HADDR[WRBUFFER_ADR_BITS -1 -: WRBUFFER_IDX_BITS];
 
-  //writebuffer write enable. Delayed pingpong toggle for 1 cycle memory access delay
+  //writebuffer read enable. Delayed pingpong toggle for 1 cycle memory access delay
   always @(posedge HCLK)
     writebuffer_re <= pingpong_toggle;
 
@@ -754,10 +754,18 @@ module sdram_ahb_if
         wr_idle: if (HREADY && (ahb_read || ahb_write) )
                  begin
                      if (writebuffer_flush)
-                       flush(writebuffer_dirty[~pingpong],
-                             wrrdy_i,
-                             writebuffer_tag  [ pingpong],
-                             1'b0);
+                     begin
+                         if (ahb_write && writebuffer_we && (tag != write_tag))
+                           flush(writebuffer_dirty[~pingpong],
+                                 wrrdy_i,
+                                 write_tag,
+                                 1'b0);
+                         else
+                           flush(writebuffer_dirty[~pingpong],
+                                 wrrdy_i,
+                                 writebuffer_tag  [ pingpong],
+                                 1'b0);
+                     end
                  end
                  else if (writebuffer_timer_expired) //timer expired
                    flush(writebuffer_dirty[~pingpong],
