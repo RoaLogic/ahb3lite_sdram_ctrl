@@ -1042,7 +1042,7 @@ module sdram_ahb_if
       rd_nxt_state  = rd_state;
       hreadyout_rd  = hreadyout_rd_reg;
 
-      wbr       = wbr_o   & ~rdrdy_i;
+      wbr       = wbr_o   &  wrreq; //wreq_o if timing is an issue
       rdreq     = rdreq_o & ~rdrdy_i;
       rdadr     = rdadr_o;
       rdadr_nxt = rdadr_nxt_reg;
