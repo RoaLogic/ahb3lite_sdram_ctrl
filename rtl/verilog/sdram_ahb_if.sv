@@ -851,8 +851,9 @@ module sdram_ahb_if
  *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
  */
 
-  always @(posedge HCLK)
-    gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending;
+  always @(posedge HCLK, negedge HRESETn)
+    if (!HRESETn) gate_rdfifo_rreq <= 1'b0;
+    else          gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending & ~gate_rdfifo_rreq;
 
   always_comb
     begin
