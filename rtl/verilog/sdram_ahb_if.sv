@@ -764,7 +764,7 @@ module sdram_ahb_if
                            flush(writebuffer_dirty[~pingpong],
                                  wrrdy_i,
                                  writebuffer_tag  [ pingpong],
-                                 1'b0);
+                                 1'b1);
                      end
                  end
                  else if (writebuffer_timer_expired) //timer expired
