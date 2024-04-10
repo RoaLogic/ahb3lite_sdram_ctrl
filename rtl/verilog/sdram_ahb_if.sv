@@ -1058,8 +1058,6 @@ assign gate_rdfifo_rreq = 1'b0;
         rd_final  : begin
                         hreadyout_rd = hreadyout_hrdata;
 
-                        rdadr = HADDR;
-
                         if (rd_burst_done && hreadyout_hrdata)
                         begin
                             if (ahb_read && HTRANS == HTRANS_NONSEQ)
@@ -1068,6 +1066,7 @@ assign gate_rdfifo_rreq = 1'b0;
                                 rd_nxt_state = rd_start;
                                 rdreq        = 1'b1;
 //                                hreadyout_rd = 1'b0;
+                                rdadr        = HADDR;
                                 wbr          = writebuffer_flush;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
