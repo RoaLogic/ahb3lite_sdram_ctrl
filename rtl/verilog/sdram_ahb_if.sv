@@ -851,9 +851,12 @@ module sdram_ahb_if
  *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
  */
 
+/*
   always @(posedge HCLK, negedge HRESETn)
     if (!HRESETn) gate_rdfifo_rreq <= 1'b0;
     else          gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending & ~gate_rdfifo_rreq;
+*/
+assign gate_rdfifo_rreq = 1'b0;
 
   always_comb
     begin
@@ -1054,7 +1057,30 @@ module sdram_ahb_if
         //wait for final data ready
         rd_final  : begin
                         hreadyout_rd = hreadyout_hrdata;
-                        if (rd_burst_done && hreadyout_hrdata) rd_nxt_state = rd_idle;
+
+                        rdadr = HADDR;
+
+                        if (rd_burst_done && hreadyout_hrdata)
+                        begin
+                            if (ahb_read && HTRANS == HTRANS_NONSEQ)
+                            begin
+                                //this is the start of a new AHB burst
+                                rd_nxt_state = rd_start;
+                                rdreq        = 1'b1;
+//                                hreadyout_rd = 1'b0;
+                                wbr          = writebuffer_flush;
+
+                                rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
+                                rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
+                                rdsize_rem        = rdsize_xfer_total - rdsize;
+                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                rdsize            = rdsize -1'h1;
+                            end
+                            else
+                            begin
+                                rd_nxt_state = rd_idle;
+                            end
+                        end
                     end
 
         //handle 2nd transaction while 1st transaction still pending
@@ -1106,7 +1132,8 @@ module sdram_ahb_if
 
         //wait for scheduler to reply/accept request
         rd_start  : begin
-                        if (csr_i.ctrl.mode == 2'b00) hreadyout_rd = hreadyout_hrdata;
+                        //no hreadyout_rd when coming from rd_final (rd_burst_done)
+                        if (csr_i.ctrl.mode == 2'b00) hreadyout_rd = hreadyout_hrdata & ~rd_burst_done;
 
                         if (rdrdy_i)
                         begin
