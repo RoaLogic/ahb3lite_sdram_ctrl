@@ -230,6 +230,7 @@ import sdram_ctrl_pkg::*;
   logic                       xfer_cnt_done;
   logic                       xfer_cnt_last_burst;
   logic [MAX_CSIZE      -1:0] xfer_col;
+  logic                       xfering;
   logic [PORTS_BITS     -1:0] active_nxt_port, active_port;
   logic                       active_nxt_rd, active_rd,
                               active_nxt_wr, active_wr;
@@ -754,6 +755,12 @@ endgenerate
   /*Transfer Counter
    */
   always @(posedge clk_i, negedge rst_ni)
+    if      (!rst_ni        ) xfering <= 1'b0;
+    else if ( burst_cnt_load) xfering <= 1'b1;
+    else if ( burst_cnt_done) xfering <= 1'b0;
+
+
+  always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
     begin
         xfer_cnt            <= {$bits(xfer_cnt){1'b0}};
@@ -763,10 +770,13 @@ endgenerate
     end
     else if (|xfer_cnt)
     begin
-        xfer_cnt            <=  xfer_cnt -1'h1;
-        xfer_cnt_done       <= (xfer_cnt == 1'h1);
-        xfer_cnt_last_burst <= (xfer_cnt == (1 << csr_i.ctrl.burst_size) +1'h1);
-        xfer_col            <=  xfer_col +1'h1;
+        if (xfering)
+        begin
+            xfer_cnt            <=  xfer_cnt -1'h1;
+            xfer_cnt_done       <= (xfer_cnt == 1'h1);
+            xfer_cnt_last_burst <= (xfer_cnt == (1 << csr_i.ctrl.burst_size) +1'h1);
+            xfer_col            <=  xfer_col +1'h1;
+        end
     end
     else if (xfer_cnt_ld) //ignore xfer_cnt_ld if current transfer not done
     begin
