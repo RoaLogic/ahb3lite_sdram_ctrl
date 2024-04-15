@@ -926,7 +926,7 @@ assign gate_rdfifo_rreq = 1'b0;
         end
         else
         begin
-            //sdram provides partial data needed in a single beat
+            //sdram provides only partial data needed in a single beat
             //need to stich multiple fifo-data bytes together to form HRDATA
             rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
         end
@@ -952,16 +952,18 @@ assign gate_rdfifo_rreq = 1'b0;
                 else
                   rdfifo_cnt <= rdfifo_cnt - (1'h1 << beat_size);
             end
+            else if (rd_burst_done)
+              rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
         end
         else
         begin
-            //sdram provides partial data needed in a single beat
+            //sdram provides only partial data needed in a single beat
             //need to stich multiple fifo-data bytes together to form HRDATA
             if (!(rd_burst_done && hreadyout_hrdata) && !rdfifo_empty &&
                   rdfifo_cnt != (1'h1 << (beat_size -1'h1))           )
                 rdfifo_cnt <= rdfifo_cnt + (2'h2 << csr_i.ctrl.dqsize);
             else
-                rdfifo_cnt    <= {$bits(rdfifo_cnt){1'b0}};
+                rdfifo_cnt <= {$bits(rdfifo_cnt){1'b0}};
         end
     end
 
@@ -1100,7 +1102,7 @@ assign gate_rdfifo_rreq = 1'b0;
                                 rdsize       = rdsize -1'h1;
                             end
                         end
-                        else
+                        else //~|rdsize_mem_reg
                         begin
                             if (hreadyout_hrdata)
                             begin
