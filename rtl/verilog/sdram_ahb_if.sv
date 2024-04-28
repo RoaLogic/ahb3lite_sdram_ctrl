@@ -733,6 +733,7 @@ module sdram_ahb_if
   //Flush
   assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag == writebuffer_tag[       0])) |
                              (ahb_read  & writebuffer_dirty[       1] & (tag == writebuffer_tag[       1])) |
+                             (ahb_read  & writebuffer_we              & (tag == write_tag                )) |
                              (ahb_write & writebuffer_dirty[pingpong] & (tag != writebuffer_tag[pingpong])) |
                              (ahb_write & writebuffer_we              & (tag != write_tag)                );
 
@@ -755,7 +756,8 @@ module sdram_ahb_if
                  begin
                      if (writebuffer_flush)
                      begin
-                         if (ahb_write && writebuffer_we && (tag != write_tag))
+                         if ( (ahb_write && writebuffer_we              && (tag != write_tag                )) ||
+                              (ahb_write && writebuffer_dirty[pingpong] && (tag != writebuffer_tag[pingpong])) )
                            flush(writebuffer_dirty[~pingpong],
                                  wrrdy_i,
                                  write_tag,
