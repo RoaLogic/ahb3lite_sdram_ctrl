@@ -294,12 +294,13 @@ module sdram_ahb_if
     input [            1:0] columns;
     input [           10:0] xfer_cnt_total;
 
-    logic        ahb_wrap_burst;
-    logic [10:0] xfers;
-    logic [ 2:0] offset;
-    logic [11:0] offset_plus_xfers;
-    logic [11:0] column_address;
-    logic        wrapped;
+    logic                  ahb_wrap_burst;
+    logic [          10:0] xfers;
+    logic [           2:0] offset;
+    logic [          11:0] offset_plus_xfers;
+    logic [          11:0] column_address;
+    logic [HADDR_SIZE-1:0] tag_address;
+    logic                  wrapped;
 
     //what's the total number of SDRAM transfers
     xfers = xfer_cnt_total;
@@ -325,6 +326,11 @@ module sdram_ahb_if
 
         //clear wrapped if the offset==0
         wrapped &= |offset;
+
+        //check if we rolled/wrapped over the WriteTAG boundary
+        tag_address = haddr & ((1'h1 << WRBUFFER_ADR_BITS) -1'h1);
+        wrapped |= (tag_address + (ahb_hburst2beats(hburst) << hsize)) > (1'h1 << WRBUFFER_ADR_BITS);
+//$display("haddr=%x, tag_address=%x, tag_address+totalbytes=%x, wrapped=%b", haddr, tag_address, tag_address+(ahb_hburst2beats(hburst) << hsize), wrapped);
 
         //check if we rolled/wrapped over the SDRAM column boundary
         column_address = (haddr >> (dqsize + 1'h1)) & ((1'h1 << (4'h8 + columns)) -1'h1);
@@ -360,6 +366,7 @@ module sdram_ahb_if
     logic [            2:0] sdram_burst_offset;
     logic [           11:0] sdram_burst_until_column_wrap;
     logic [           10:0] sdram_burst_until_burst_wrap;
+    logic [           10:0] sdram_burst_until_tag_wrap;
     logic [           10:0] sdram_burst_until_wrap;
     logic [           10:0] sdram_burst_total;
     logic [           10:0] sdram_burst_actual;
@@ -386,7 +393,14 @@ module sdram_ahb_if
     sdram_burst_until_column_wrap = (1'h1 << (4'h8 + columns)) - ( (haddr >> (dqsize + 1'h1)) & ((1'h1 << (4'h8 + columns)) -1'h1) );
 //$display("sdram_burst_until_column_wrap=%0d", sdram_burst_until_column_wrap);
 
-    sdram_burst_until_wrap = min(sdram_burst_until_burst_wrap, sdram_burst_until_column_wrap);
+    //get the number of SDRAM transactions until the AHB burst hits the WriteTAG boundary
+    sdram_burst_until_tag_wrap = ((1'h1 << WRBUFFER_ADR_BITS) - (haddr & ((1'h1 << WRBUFFER_ADR_BITS) -1'h1))) >> (dqsize + 1'h1);
+    sdram_burst_until_tag_wrap = max(1,sdram_burst_until_tag_wrap);
+
+//$display("sdram_burst_until_tag_wrap=%0d", sdram_burst_until_tag_wrap);
+
+    sdram_burst_until_wrap = min(min(sdram_burst_until_burst_wrap, sdram_burst_until_column_wrap), sdram_burst_until_tag_wrap);
+//$display("sdram_burst_until_wrap=%0d", sdram_burst_until_wrap);
 
     //get the number of SDRAM transactions until the AHB address rolls over
     ahb_burst_until_wrap = (totalbytes - (haddr & (totalbytes -1'h1))) >> (dqsize +1'h1);
@@ -484,11 +498,13 @@ module sdram_ahb_if
   logic [HBURST_SIZE      -1:0] beat_burst;
   logic [HADDR_SIZE       -1:0] beat_addr;
 
-
   //Write
   logic [HDATA_BYTES      -1:0] be;
+  logic [HADDR_SIZE       -1:0] haddr_end;
   logic [WRBUFFER_TAG_SIZE-1:0] tag,
-                                write_tag;
+                                tag_end,
+                                write_tag,
+                                tag_nxt;
   logic [WRBUFFER_IDX_BITS-1:0] wr_idx;
 
   logic                         writebuffer_flush;
@@ -528,7 +544,9 @@ module sdram_ahb_if
 
 
   //To SDRAM
-  logic                           wbr;      //write-before-read
+  logic                           wbr,       //write-before-read
+                                  wbr_nxt,
+                                  wbr_nxt_reg;
 
   logic                           rdreq;
   logic [HADDR_SIZE         -1:0] rdadr;
@@ -630,7 +648,10 @@ module sdram_ahb_if
 
 
   //TAG
-  assign tag = HADDR[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+  assign tag       = HADDR    [HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+  assign haddr_end = ahb_is_wrap_burst(HBURST) ? HADDR
+                                               : HADDR + (ahb_hburst2beats(HBURST) << HSIZE);
+  assign tag_end   = haddr_end[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
 
   always @(posedge HCLK, negedge HRESETn)
     if      (!HRESETn) write_tag <= {WRBUFFER_TAG_SIZE{1'b0}};
@@ -731,11 +752,14 @@ module sdram_ahb_if
 
     
   //Flush
-  assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag == writebuffer_tag[       0])) |
-                             (ahb_read  & writebuffer_dirty[       1] & (tag == writebuffer_tag[       1])) |
-                             (ahb_read  & writebuffer_we              & (tag == write_tag                )) |
-                             (ahb_write & writebuffer_dirty[pingpong] & (tag != writebuffer_tag[pingpong])) |
-                             (ahb_write & writebuffer_we              & (tag != write_tag)                );
+  assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag     == writebuffer_tag[       0])) |
+//                             (ahb_read  & writebuffer_dirty[       0] & (tag_end == writebuffer_tag[       0])) |
+                             (ahb_read  & writebuffer_dirty[       1] & (tag     == writebuffer_tag[       1])) |
+//                             (ahb_read  & writebuffer_dirty[       1] & (tag_end == writebuffer_tag[       1])) |
+                             (ahb_read  & writebuffer_we              & (tag     == write_tag                )) |
+//                             (ahb_read  & writebuffer_we              & (tag_end == write_tag                )) |
+                             (ahb_write & writebuffer_dirty[pingpong] & (tag     != writebuffer_tag[pingpong])) |
+                             (ahb_write & writebuffer_we              & (tag     != write_tag                ));
 
 
   //Write FSM
@@ -1054,8 +1078,9 @@ assign gate_rdfifo_rreq = 1'b0;
       rd_nxt_state  = rd_state;
       hreadyout_rd  = hreadyout_rd_reg;
 
-      wbr       = wbr_o   &  wrreq; //wreq_o if timing is an issue
-      rdreq     = rdreq_o & ~rdrdy_i;
+      wbr       = wbr_o       &  wrreq; //wreq_o if timing is an issue
+      wbr_nxt   = wbr_nxt_reg &  wrreq;
+      rdreq     = rdreq_o     & ~rdrdy_i;
       rdadr     = rdadr_o;
       rdadr_nxt = rdadr_nxt_reg;
       rdsize    = rdsize_o;
@@ -1081,6 +1106,9 @@ assign gate_rdfifo_rreq = 1'b0;
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
                                 rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+                                wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                                                    (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize            = rdsize -1'h1;
                             end
                             else
@@ -1099,12 +1127,16 @@ assign gate_rdfifo_rreq = 1'b0;
                             if (rdrdy_i)
                             begin
                                 rd_nxt_state = rd_pending; //rd_start;
+                                wbr          = wbr_nxt_reg;
                                 rdreq        = 1'b1;
                                 rdadr        = rdadr_nxt_reg;
                                 rdsize       = /*beat_burst[0] ? rdsize_rem_reg
                                                              :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
                                 rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                tag_nxt      = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+                                wbr_nxt      = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                                               (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize       = rdsize -1'h1;
                             end
                         end
@@ -1158,26 +1190,33 @@ assign gate_rdfifo_rreq = 1'b0;
                             else if (ahb_read && HTRANS == HTRANS_NONSEQ && rd_burst_done)
                             begin
                                 //this is the start of a new AHB burst
-                                rd_nxt_state = rd_pending;
-                                rdreq        = 1'b1;
-                                hreadyout_rd = 1'b0;
-                                wbr          = writebuffer_flush;
+                                rd_nxt_state      = rd_pending;
+                                wbr               = writebuffer_flush;
+                                rdreq             = 1'b1;
+                                hreadyout_rd      = 1'b0;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
                                 rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+                                wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                                                    (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize            = rdsize -1'h1;
                             end
                             else
                             begin
                                 rd_nxt_state = |rdsize_rem_reg ? rd_start : rd_final;
+                                wbr          = wbr_nxt_reg;
                                 rdreq        = |rdsize_rem_reg;
                                 rdadr        = rdadr_nxt_reg;
                                 rdsize       = /*beat_burst[0] ? rdsize_rem_reg
                                                              :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
                                 rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                                tag_nxt      = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+                                wbr_nxt      = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                                               (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize       = rdsize -1'h1;
                             end
                         end
@@ -1196,6 +1235,9 @@ assign gate_rdfifo_rreq = 1'b0;
                         rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                         rdsize_rem        = rdsize_xfer_total /*sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize)*/ - rdsize;
                         rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize,HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size);
+                        tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+                        wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                                            (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                         rdsize            = rdsize -1'h1; //do the -1 here
                     end
       endcase
@@ -1216,6 +1258,7 @@ assign gate_rdfifo_rreq = 1'b0;
         pingpong         <= 1'b0;
 
         wbr_o            <= 1'b0;
+        wbr_nxt_reg      <= 1'b0;
         wrreq_dly        <= 1'b0;
         wrreq_o          <= 1'b0;
         wradr_o          <= {$bits(wradr_o ){1'bx}};
@@ -1239,6 +1282,7 @@ assign gate_rdfifo_rreq = 1'b0;
         pingpong         <= nxt_pingpong;
 
         wbr_o            <= wbr;
+        wbr_nxt_reg      <= wbr_nxt;
         wrreq_dly        <= wrreq;                          //extra delay for wrreq, because wrd_o is 1 cycle late
         wrreq_o          <= wrreq_dly & (~wrrdy_i | wrreq); //Allow continuous wrreq only when wrreq set in wr_wait state
                                                             //wrd_o is at least 1 cycle stable due to wr_wait
