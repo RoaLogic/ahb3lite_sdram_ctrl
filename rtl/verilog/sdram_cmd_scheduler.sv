@@ -308,7 +308,7 @@ import sdram_ctrl_pkg::*;
     tRRD_load           = 1'b0;
     tRC_load            = {BANKS{1'b0}};
     tRFC_load           = 1'b0;
-    tWR_load_val        = (1'h1 << csr_i.ctrl.burst_size)
+    tWR_load_val        = (3'h4 << csr_i.ctrl.burst_size)
                           + csr_i.timing.tWR;
     tWR_load            = {BANKS{1'b0}};
     burst_cnt_load      = 1'b0;
@@ -401,7 +401,7 @@ import sdram_ctrl_pkg::*;
 //and tWR cycle(s) after last valid data
 //or  interrupted by read or write (with or without auto precharge)
     tRP_load_val        = tRAS_cnt[port]
-                          + (1'h1 << csr_i.ctrl.burst_size)
+                          + (3'h4 << csr_i.ctrl.burst_size)
                           + csr_i.timing.tWR;
     tWR_load       [ba] = 1'b1; //~go_ap, but we don't issue a PRE if the bank is auto-precharged
     bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
@@ -442,7 +442,7 @@ import sdram_ctrl_pkg::*;
 //and CAS Latency -1 cycles before last burst
 //or  interrupted by read or write (with or without auto precharge)
     tRP_load_val        = tRAS_cnt[port]
-                          + (1'h1 << csr_i.ctrl.burst_size) - (csr_i.timing.cl -1'h1)
+                          + (3'h4 << csr_i.ctrl.burst_size) - (csr_i.timing.cl -1'h1)
                           + csr_i.timing.tRP;
     bank_nxt_status[ba] = go_ap ? BANK_STATUS_IDLE : bank_status[ba];
 
@@ -626,7 +626,7 @@ endgenerate
 
   /*Burst Counters
    */
-  assign burst_cnt_int_val = (1'h1 << csr_i.ctrl.burst_size) -1'h1;
+  assign burst_cnt_int_val = (3'h4 << csr_i.ctrl.burst_size) -1'h1;
 
   always @(posedge clk_i, negedge rst_ni)
     if (!rst_ni)
@@ -636,8 +636,8 @@ endgenerate
     end
     else if (burst_cnt_load)
     begin
-        burst_cnt      <=  burst_cnt_int_val;
-        burst_cnt_done <= ~|csr_i.ctrl.burst_size;
+        burst_cnt      <= burst_cnt_int_val;
+        burst_cnt_done <= 1'b0;//~|csr_i.ctrl.burst_size;
     end
     else if (burst_terminate)
     begin
@@ -660,7 +660,7 @@ endgenerate
    else if (burst_cnt_load && active_nxt_wr)
     begin
         burst_cnt_wr2rd      <= burst_cnt_int_val - csr_i.timing.cl;
-        burst_cnt_wr2rd_done <= csr_i.ctrl.burst_size < csr_i.timing.cl;
+        burst_cnt_wr2rd_done <= 1'b0; //{1'b1,csr_i.ctrl.burst_size} < csr_i.timing.cl;
     end
     else if (burst_terminate)
     begin
@@ -774,7 +774,7 @@ endgenerate
         begin
             xfer_cnt            <=  xfer_cnt -1'h1;
             xfer_cnt_done       <= (xfer_cnt == 1'h1);
-            xfer_cnt_last_burst <= (xfer_cnt == (1 << csr_i.ctrl.burst_size) +1'h1);
+            xfer_cnt_last_burst <= (xfer_cnt == (3'h4 << csr_i.ctrl.burst_size) +1'h1);
             xfer_col            <=  xfer_col +1'h1;
         end
     end
@@ -782,7 +782,7 @@ endgenerate
     begin
         xfer_cnt            <=   xfer_cnt_ld_val;
         xfer_cnt_done       <= ~|xfer_cnt_ld_val;
-        xfer_cnt_last_burst <=   xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size);
+        xfer_cnt_last_burst <=   xfer_cnt_ld_val <= (3'h4 << csr_i.ctrl.burst_size);
 //        xfer_col            <=   sdram_nxt_addr[0 +: $bits(xfer_col)] +1'h1; //store (next) sdram column
         xfer_col            <=   sdram_nxt_col + 1'h1; //use dedicated sdram_nxt_col to reduce critical path
     end
@@ -828,7 +828,7 @@ generate
               1'b0: if ( rdreq_nowbr[port] && (port == rdport) && active_rd &&
                          (
                            (                 xfer_cnt_last_burst                              ) ||
-                           ( xfer_cnt_ld && (xfer_cnt_ld_val <= (1 << csr_i.ctrl.burst_size)) )
+                           ( xfer_cnt_ld && (xfer_cnt_ld_val <= (3'h4 << csr_i.ctrl.burst_size)) )
                          )
                        )
                       rdrdy_o[port] <= 1'b1;

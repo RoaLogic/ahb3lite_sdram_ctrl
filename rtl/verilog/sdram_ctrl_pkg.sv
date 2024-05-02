@@ -58,23 +58,22 @@ package sdram_ctrl_pkg;
                            //01:precharge command
                            //10:auto-refresh mode
                            //11:set mode register
-    logic       pp;        //0:allow normal and privileged access to CSRs
-                           //1:allow privileged access only. Normal access=error
+    logic       pp;        // 0:allow normal and privileged access to CSRs
+                           // 1:allow privileged access only. Normal access=error
     logic       reserved26;
+    logic       reserved25;
+    logic       burst_size;// 0: 4
+                           // 1: 8
     logic [1:0] rows;      //00:11 rows
                            //01:12 rows
                            //10:13 rows
                            //11:14 rows (just for completeness)
-    logic [1:0] burst_size;//00: 1
-                           //01: 2
-                           //10: 4
-                           //11: 8
     logic [1:0] cols;      //00: 8 columns
                            //01: 9 columns
                            //10:10 columns
                            //11:11 columns
-    logic       iam;       //0:linear bank addressing
-                           //1:interleaved bank addressing
+    logic       iam;       // 0:linear bank addressing
+                           // 1:interleaved bank addressing
     logic       ap;        //auto-precharge on read/write
     logic [1:0] dqsize;    //00: 16bits on DQ[ 15:0]
                            //01: 32bits on DQ[ 31:0]
