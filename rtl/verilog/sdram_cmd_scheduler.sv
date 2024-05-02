@@ -239,7 +239,7 @@ import sdram_ctrl_pkg::*;
   logic                       burst_cnt_load;
   logic                       burst_cnt_done;
   logic                       burst_terminate;         //read less than csr_i.ctrl.burst_size
-  logic [                2:0] burst_cnt_rd2wr;         //Number of cycles when a WR can be issues afer a RD
+  logic [                4:0] burst_cnt_rd2wr;         //Number of cycles when a WR can be issues afer a RD
   logic                       burst_cnt_rd2wr_done;
   logic [                5:0] burst_cnt_wr2rd;         //Number of cycles when a RD can be issues after a WR
   logic                       burst_cnt_wr2rd_done;
