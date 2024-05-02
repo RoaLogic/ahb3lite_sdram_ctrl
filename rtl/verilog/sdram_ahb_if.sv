@@ -428,7 +428,6 @@ module sdram_ahb_if
     input [HBURST_SIZE-1:0] hburst;
     input [HSIZE_SIZE -1:0] hsize;
     input [            1:0] dqsize;
-//    input [            1:0] burst_size;
 
     logic                   ahb_wrap_burst;
     logic [           10:0] address_mask;
@@ -452,35 +451,6 @@ module sdram_ahb_if
   endfunction : sdram_rd_nxt_radr
 
 
-/*
-  //calculate next burst address
-  function automatic [ADDR_SIZE-1:0] nxt_addr;
-    input [ADDR_SIZE  -1:0] addr;   //current address
-    input [HBURST_SIZE-1:0] hburst; //AHB HBURST
-    input [HSIZE_SIZE -1:0] hsize;  //AHB HSIZE
-
-    logic [ADDR_SIZE-1:0] mask;
-
-
-    //next linear address
-    nxt_addr = addr + (1 << hsize);
-
-    //align to boundary
-    nxt_addr = nxt_addr & ({ADDR_SIZE{1'b1}} << hsize);
-
-    //wrap?
-    case (hburst)
-      HBURST_WRAP4 : mask = {{ADDR_SIZE-2{1'b1}}, 2'h0} << hsize;
-      HBURST_WRAP8 : mask = {{ADDR_SIZE-3{1'b1}}, 3'h0} << hsize;
-      HBURST_WRAP16: mask = {{ADDR_SIZE-4{1'b1}}, 4'h0} << hsize;
-      default      : mask = {ADDR_SIZE{1'b0}};
-    endcase
-
-    //mix linear/wrap address
-    nxt_addr = (addr & mask) | (nxt_addr & ~mask);
-  endfunction: nxt_addr
-*/
-
   //////////////////////////////////////////////////////////////////
   //
   // Variables
@@ -500,9 +470,7 @@ module sdram_ahb_if
 
   //Write
   logic [HDATA_BYTES      -1:0] be;
-  logic [HADDR_SIZE       -1:0] haddr_end;
   logic [WRBUFFER_TAG_SIZE-1:0] tag,
-                                tag_end,
                                 write_tag,
                                 tag_nxt;
   logic [WRBUFFER_IDX_BITS-1:0] wr_idx;
@@ -521,7 +489,7 @@ module sdram_ahb_if
                                 nxt_pingpong;
 
   //Read
-  logic                         rdfifo_rreq, gate_rdfifo_rreq;
+  logic                         rdfifo_rreq;
   logic                         rdfifo_empty;
   logic [SDRAM_DQ_SIZE    -1:0] rdfifo_q;
   logic [SDRAM_DQ_BITS    -1:0] rdfifo_cnt;
@@ -535,7 +503,7 @@ module sdram_ahb_if
 
 
   //FSM encoding
-  enum logic [2:0] {rd_idle = 3'b000, rd_start = 3'b001, rd_pending = 3'b101, rd_burst = 3'b011, rd_final = 3'b111} rd_nxt_state, rd_state;
+  enum logic [2:0] {rd_idle = 3'b000, rd_start = 3'b001, rd_pending = 3'b010, rd_final = 3'b100} rd_nxt_state, rd_state;
   enum logic       {wr_idle = 1'b0, wr_wait=1'b1} wr_nxt_state, wr_state;
 
   logic hreadyout_rd, hreadyout_rd_reg;
@@ -649,9 +617,6 @@ module sdram_ahb_if
 
   //TAG
   assign tag       = HADDR    [HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
-  assign haddr_end = ahb_is_wrap_burst(HBURST) ? HADDR
-                                               : HADDR + (ahb_hburst2beats(HBURST) << HSIZE);
-  assign tag_end   = haddr_end[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
 
   always @(posedge HCLK, negedge HRESETn)
     if      (!HRESETn) write_tag <= {WRBUFFER_TAG_SIZE{1'b0}};
@@ -753,11 +718,8 @@ module sdram_ahb_if
     
   //Flush
   assign writebuffer_flush = (ahb_read  & writebuffer_dirty[       0] & (tag     == writebuffer_tag[       0])) |
-//                             (ahb_read  & writebuffer_dirty[       0] & (tag_end == writebuffer_tag[       0])) |
                              (ahb_read  & writebuffer_dirty[       1] & (tag     == writebuffer_tag[       1])) |
-//                             (ahb_read  & writebuffer_dirty[       1] & (tag_end == writebuffer_tag[       1])) |
                              (ahb_read  & writebuffer_we              & (tag     == write_tag                )) |
-//                             (ahb_read  & writebuffer_we              & (tag_end == write_tag                )) |
                              (ahb_write & writebuffer_dirty[pingpong] & (tag     != writebuffer_tag[pingpong])) |
                              (ahb_write & writebuffer_we              & (tag     != write_tag                ));
 
@@ -825,7 +787,7 @@ module sdram_ahb_if
   rdfifo (
     .rst_ni  ( HRESETn      ),
     .clk_i   ( HCLK         ),
-    .clr_i   ( 1'b0         ), //TODO: use clr_i to remove extra read data?
+    .clr_i   ( 1'b0         ),
 
     .d_i     ( rdq_i        ),
     .wrena_i ( rdqvalid_i   ),
@@ -881,24 +843,16 @@ module sdram_ahb_if
  *     //if (rdfifo_cnt == (1 << beat_size)) hreadyout=1,rdfifo_cnt=0
  */
 
-/*
-  always @(posedge HCLK, negedge HRESETn)
-    if (!HRESETn) gate_rdfifo_rreq <= 1'b0;
-    else          gate_rdfifo_rreq <= hreadyout_hrdata & rd_burst_done & HTRANS == HTRANS_NONSEQ & rd_state==rd_pending & ~gate_rdfifo_rreq;
-*/
-assign gate_rdfifo_rreq = 1'b0;
-
   always_comb
     begin
         rdfifo_rreq = 1'b0;
 
-//        if (!gate_rdfifo_rreq)
         if (beat_size < csr_i.ctrl.dqsize +1'h1)
         begin
             //sdram provides more data than needed in a single beat
 
             if (beat_burst == HBURST_SINGLE && !rdfifo_empty) rdfifo_rreq = 1'b1;
-            else if (/*!(HREADY && HTRANS==HTRANS_NONSEQ && rd_state==rd_pending)*/ !gate_rdfifo_rreq && !rdfifo_empty)
+            else if (!rdfifo_empty)
             begin
                 if (rdfifo_cnt == 0) rdfifo_rreq = 1'b1;
             end
@@ -907,7 +861,7 @@ assign gate_rdfifo_rreq = 1'b0;
         begin
             //sdram provides partial data needed in a single beat
             //need to stich multiple fifo-data bytes together to form HRDATA
-            if (/*!(HREADY && HTRANS==HTRANS_NONSEQ && rd_state==rd_pending)*/ !gate_rdfifo_rreq && !rdfifo_empty) rdfifo_rreq = 1'b1;
+            if (!rdfifo_empty) rdfifo_rreq = 1'b1;
         end
     end
 
@@ -1002,7 +956,7 @@ assign gate_rdfifo_rreq = 1'b0;
   always @(posedge HCLK)
     if (!rdfifo_empty)
     begin
-        if ((hreadyout_hrdata && rd_burst_done && HTRANS == HTRANS_NONSEQ) || gate_rdfifo_rreq)
+        if ((hreadyout_hrdata && rd_burst_done && HTRANS == HTRANS_NONSEQ))
           hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
         else
         if (beat_size < csr_i.ctrl.dqsize +1'h1)
@@ -1013,20 +967,6 @@ assign gate_rdfifo_rreq = 1'b0;
     else
     if (HREADY && HTRANS == HTRANS_NONSEQ)
       hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
-
-/*
-  always @(posedge HCLK)
-    if (HREADY && HTRANS == HTRANS_NONSEQ)
-      hrdata_idx <= HADDR[0 +: HDATA_BYTES_BITS];
-    else if (!rdfifo_empty)
-    begin
-        if (beat_size < csr_i.ctrl.dqsize +1'h1)
-          hrdata_idx <= hrdata_idx + (1'h1 << beat_size);
-        else
-          hrdata_idx <= hrdata_idx + (2'h2 << csr_i.ctrl.dqsize);
-    end
-*/
-
 
 
   //assign HRDATA
@@ -1098,14 +1038,13 @@ assign gate_rdfifo_rreq = 1'b0;
                                 //this is the start of a new AHB burst
                                 rd_nxt_state = rd_start;
                                 rdreq        = 1'b1;
-//                                hreadyout_rd = 1'b0;
                                 rdadr        = HADDR;
                                 wbr          = writebuffer_flush;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
-                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize);
+                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
                                 wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                     (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
@@ -1126,14 +1065,13 @@ assign gate_rdfifo_rreq = 1'b0;
                         begin
                             if (rdrdy_i)
                             begin
-                                rd_nxt_state = rd_pending; //rd_start;
+                                rd_nxt_state = rd_pending;
                                 wbr          = wbr_nxt_reg;
                                 rdreq        = 1'b1;
                                 rdadr        = rdadr_nxt_reg;
-                                rdsize       = /*beat_burst[0] ? rdsize_rem_reg
-                                                             :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
+                                rdsize       = sdram_rd_xfer_cnt(rdadr_nxt_reg, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
-                                rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, HBURST, HSIZE, /*beat_burst, beat_size,*/ csr_i.ctrl.dqsize);
+                                rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 tag_nxt      = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
                                 wbr_nxt      = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
@@ -1145,27 +1083,12 @@ assign gate_rdfifo_rreq = 1'b0;
                             if (hreadyout_hrdata)
                             begin
                                 rd_nxt_state = rd_final;
-                                rdreq        = rdreq_o & ~rdrdy_i; //??? not |rdsize_o!!
+                                rdreq        = rdreq_o & ~rdrdy_i;
                                 rdadr        = rdadr_o;
                                 rdsize       = rdsize_o;
                                 rdsize_rem   = rdsize_rem_reg;
                                 rdadr_nxt    = rdadr_nxt_reg;
                             end
-                        end
-                    end
-
-        //continue (broken) burst
-        rd_burst  : begin
-                        hreadyout_rd = hreadyout_hrdata;
-
-                        if (rdrdy_i)
-                        begin
-                            rdadr  = rdadr_nxt_reg;
-                            rdreq  = 1'b0;
-                            rdsize = sdram_rd_xfer_cnt(rdadr_o, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg) -1'h1; //do the -1 here
-
-//                            rd_nxt_state = sdram_rd_xfer_break(beat_addr, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size) ? rd_burst : rd_final;
-                            rd_nxt_state = rd_final;
                         end
                     end
 
@@ -1177,8 +1100,6 @@ assign gate_rdfifo_rreq = 1'b0;
                         if (rdrdy_i)
                         begin
                             rdadr  = HADDR;
-//                            rdsize_xfer_total = sdram_rd_xfer_total_cnt(beat_addr, beat_burst, beat_size, csr_i.ctrl.dqsize);
-//                            rdsize = sdram_rd_xfer_cnt(beat_addr, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, rdsize_xfer_total);
 
                             if (csr_i.ctrl.mode != 2'b00)
                             begin
@@ -1198,7 +1119,7 @@ assign gate_rdfifo_rreq = 1'b0;
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
-                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR/*beat_addr*/, rdsize, HBURST/*beat_burst*/, HSIZE/*beat_size*/, csr_i.ctrl.dqsize);
+                                rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize, HBURST, HSIZE, csr_i.ctrl.dqsize);
                                 tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
                                 wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                     (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
@@ -1210,8 +1131,7 @@ assign gate_rdfifo_rreq = 1'b0;
                                 wbr          = wbr_nxt_reg;
                                 rdreq        = |rdsize_rem_reg;
                                 rdadr        = rdadr_nxt_reg;
-                                rdsize       = /*beat_burst[0] ? rdsize_rem_reg
-                                                             :*/ sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
+                                rdsize       = sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
                                 rdadr_nxt    = sdram_rd_nxt_radr(rdadr_nxt_reg, rdsize, beat_burst, beat_size, csr_i.ctrl.dqsize);
                                 tag_nxt      = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
@@ -1233,7 +1153,7 @@ assign gate_rdfifo_rreq = 1'b0;
                         rdadr             = HADDR;
                         rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
                         rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
-                        rdsize_rem        = rdsize_xfer_total /*sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize)*/ - rdsize;
+                        rdsize_rem        = rdsize_xfer_total - rdsize;
                         rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize,HBURST, HSIZE, csr_i.ctrl.dqsize);
                         tag_nxt           = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
                         wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
