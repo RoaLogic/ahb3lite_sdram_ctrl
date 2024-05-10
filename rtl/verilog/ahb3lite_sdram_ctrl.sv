@@ -10,7 +10,7 @@
 //                                                                 //
 /////////////////////////////////////////////////////////////////////
 //                                                                 //
-//             Copyright (C) 2023 ROA Logic BV                     //
+//             Copyright (C) 2023-2024 ROA Logic BV                //
 //             www.roalogic.com                                    //
 //                                                                 //
 //     Unless specifically agreed in writing, this software is     //
@@ -184,7 +184,7 @@ module ahb3lite_sdram_ctrl
   logic [MAX_RSIZE          -1:0] rdrow     [AHB_PORTS];
   logic [MAX_CSIZE          -1:0] rdcol     [AHB_PORTS];
   logic [                    7:0] rdsize    [AHB_PORTS];
-  logic [HDATA_SIZE         -1:0] rdq       [AHB_PORTS];
+  logic [SDRAM_DQ_SIZE      -1:0] rdq       [AHB_PORTS];
   logic                           rdqvalid  [AHB_PORTS];
 
   logic                           wrreq     [AHB_PORTS];
