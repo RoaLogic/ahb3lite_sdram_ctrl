@@ -566,6 +566,29 @@ module sdram_ahb_if
   endtask : go_flush
 
 
+  task go_read;
+    input [HADDR_SIZE       -1:0] adr_nxt;
+    input [HBURST_SIZE      -1:0] hburst;
+    input [HSIZE_SIZE       -1:0] hsize;
+    input [                  1:0] dqsize;
+    input                         burst_size;
+    input [                  1:0] columns;
+    input [                  7:0] rdsize_remainder;
+    input                         witebuffer_dirty[2];
+    input [WRBUFFER_TAG_SIZE-1:0] writebuffer_tag [2];
+    input [WRBUFFER_TAG_SIZE-1:0] tag_nxt;
+
+    rdadr      = adr_nxt;
+    rdsize     = sdram_rd_xfer_cnt(adr_nxt, hburst, hsize, dqsize, burst_size, columns, rdsize_remainder);
+    rdsize_rem = rdsize_remainder - rdsize;
+    rdadr_nxt  = sdram_rd_nxt_radr(adr_nxt, rdsize, hburst, hsize, dqsize);
+    tag_nxt    = rdadr_nxt[HADDR_SIZE -1 -: WRBUFFER_TAG_SIZE];
+    wbr_nxt    = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
+                 (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
+    rdsize     = rdsize -1'h1;
+  endtask : go_read
+
+
   //////////////////////////////////////////////////////////////////
   //
   // Module Body
@@ -1038,10 +1061,21 @@ module sdram_ahb_if
                                 //this is the start of a new AHB burst
                                 rd_nxt_state = rd_start;
                                 rdreq        = 1'b1;
-                                rdadr        = HADDR;
                                 wbr          = writebuffer_flush;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
+                                go_read (HADDR,
+                                         HBURST,
+                                         HSIZE,
+                                         csr_i.ctrl.dqsize,
+                                         csr_i.ctrl.burst_size,
+                                         csr_i.ctrl.cols,
+                                         rdsize_xfer_total,
+                                         writebuffer_dirty,
+                                         writebuffer_tag,
+                                         tag_nxt);
+/*
+                                rdadr             = HADDR;
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
                                 rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize, HBURST, HSIZE, csr_i.ctrl.dqsize);
@@ -1049,6 +1083,7 @@ module sdram_ahb_if
                                 wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                     (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize            = rdsize -1'h1;
+*/
                             end
                             else
                             begin
@@ -1068,6 +1103,18 @@ module sdram_ahb_if
                                 rd_nxt_state = rd_pending;
                                 wbr          = wbr_nxt_reg;
                                 rdreq        = 1'b1;
+
+                                go_read (rdadr_nxt_reg, //must use rdadr_nxt_reg here
+                                         HBURST,        //must use HBURST here,
+                                         HSIZE,         //must use HSIZE here,
+                                         csr_i.ctrl.dqsize,
+                                         csr_i.ctrl.burst_size,
+                                         csr_i.ctrl.cols,
+                                         rdsize_rem_reg,
+                                         writebuffer_dirty,
+                                         writebuffer_tag,
+                                         tag_nxt);
+/*
                                 rdadr        = rdadr_nxt_reg;
                                 rdsize       = sdram_rd_xfer_cnt(rdadr_nxt_reg, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
@@ -1076,6 +1123,7 @@ module sdram_ahb_if
                                 wbr_nxt      = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize       = rdsize -1'h1;
+*/
                             end
                         end
                         else //~|rdsize_mem_reg
@@ -1117,6 +1165,18 @@ module sdram_ahb_if
                                 hreadyout_rd      = 1'b0;
 
                                 rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
+                                go_read (HADDR,
+                                         HBURST,
+                                         HSIZE,
+                                         csr_i.ctrl.dqsize,
+                                         csr_i.ctrl.burst_size,
+                                         csr_i.ctrl.cols,
+                                         rdsize_xfer_total,
+                                         writebuffer_dirty,
+                                         writebuffer_tag,
+                                         tag_nxt);
+/*
+                                rdadr             = HADDR;
                                 rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                                 rdsize_rem        = rdsize_xfer_total - rdsize;
                                 rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize, HBURST, HSIZE, csr_i.ctrl.dqsize);
@@ -1124,12 +1184,25 @@ module sdram_ahb_if
                                 wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                     (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize            = rdsize -1'h1;
+*/
                             end
                             else
                             begin
                                 rd_nxt_state = |rdsize_rem_reg ? rd_start : rd_final;
                                 wbr          = wbr_nxt_reg;
                                 rdreq        = |rdsize_rem_reg;
+
+                                go_read (rdadr_nxt_reg,
+                                         beat_burst,
+                                         beat_size,
+                                         csr_i.ctrl.dqsize,
+                                         csr_i.ctrl.burst_size,
+                                         csr_i.ctrl.cols,
+                                         rdsize_rem_reg,
+                                         writebuffer_dirty,
+                                         writebuffer_tag,
+                                         tag_nxt);
+/*
                                 rdadr        = rdadr_nxt_reg;
                                 rdsize       = sdram_rd_xfer_cnt(rdadr_nxt_reg, beat_burst, beat_size, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_rem_reg);
                                 rdsize_rem   = rdsize_rem_reg - rdsize;
@@ -1138,6 +1211,7 @@ module sdram_ahb_if
                                 wbr_nxt      = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                                (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                                 rdsize       = rdsize -1'h1;
+*/
                             end
                         end
                     end
@@ -1148,10 +1222,22 @@ module sdram_ahb_if
                         rd_nxt_state      = rd_start;
                         hreadyout_rd      = 1'b0; //insert wait states
                         wbr               = writebuffer_flush;
-
                         rdreq             = 1'b1;
-                        rdadr             = HADDR;
+
                         rdsize_xfer_total = sdram_rd_xfer_total_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize);
+                        go_read (HADDR,
+                                 HBURST,
+                                 HSIZE,
+                                 csr_i.ctrl.dqsize,
+                                 csr_i.ctrl.burst_size,
+                                 csr_i.ctrl.cols,
+                                 rdsize_xfer_total,
+                                 writebuffer_dirty,
+                                 writebuffer_tag,
+                                 tag_nxt);
+
+/*
+                        rdadr             = HADDR;
                         rdsize            = sdram_rd_xfer_cnt(HADDR, HBURST, HSIZE, csr_i.ctrl.dqsize, csr_i.ctrl.burst_size, csr_i.ctrl.cols, rdsize_xfer_total);
                         rdsize_rem        = rdsize_xfer_total - rdsize;
                         rdadr_nxt         = sdram_rd_nxt_radr(HADDR, rdsize,HBURST, HSIZE, csr_i.ctrl.dqsize);
@@ -1159,6 +1245,7 @@ module sdram_ahb_if
                         wbr_nxt           = (writebuffer_dirty[0] & (tag_nxt == writebuffer_tag[0])) |
                                             (writebuffer_dirty[1] & (tag_nxt == writebuffer_tag[1]));
                         rdsize            = rdsize -1'h1; //do the -1 here
+*/
                     end
       endcase
     end
