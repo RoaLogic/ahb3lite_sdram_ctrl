@@ -267,8 +267,8 @@ import sdram_ctrl_pkg::*;
   logic [MAX_CSIZE      -1:0] sdram_nxt_col;
   logic [SDRAM_BA_SIZE  -1:0] sdram_nxt_ba,      sdram_ba,
                               sdram_nxt_rdwr_ba, sdram_rdwr_ba;
-  logic [SDRAM_DQ_SIZE  -1:0] sdram_dq;
-  logic [SDRAM_DQ_SIZE/8-1:0] sdram_dm;
+//  logic [SDRAM_DQ_SIZE  -1:0] sdram_dq;
+//  logic [SDRAM_DQ_SIZE/8-1:0] sdram_dm;
   logic                       sdram_dqoe;
 
 
