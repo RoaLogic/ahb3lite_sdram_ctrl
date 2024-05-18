@@ -65,6 +65,9 @@
   endfunction : get_t_period
 
 
+  /*
+   * Set Time CSR
+   */
   task set_time_csr(
     input real  clk_period,
     input int   refreshes,
@@ -123,14 +126,19 @@
   endtask : set_time_csr
 
 
+  /*
+   * Initialise SDRAM Controller
+   */
   task initialise_sdram_ctrl();
     logic [HDATA_SIZE-1:0] rbuf[];
+    logic [          31:0] regval;
 
     //initalise SDRAM controller
     $display ("Initialising SDRAM controller");
 
     $display ("  Precharge ALL"); 
     //set Controller Precharge Command
+    @(posedge PCLK);
     apb_bfm.write(SDRAM_CTRL, 32'h9000_0000, 4'hf);
 
     //Precharge ALL; read from SDRAM
@@ -139,11 +147,11 @@
                                        HDATA_SIZE == 32 ? HSIZE_WORD : HSIZE_DWORD,
                                        HBURST_SINGLE);
     ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
-//    wait fork;
 
 
     $display ("  Auto Refreshes");
     //Set Controller Auto Refresh Command
+    @(posedge PCLK);
     apb_bfm.write(SDRAM_CTRL, 32'ha000_0000, 4'hf);
 
     //Perform 8 auto refreshes; read from SDRAM 8x
@@ -157,29 +165,39 @@
 
     $display ("  Write Mode Register");
     //Set Controller Command Mode Register
+    @(posedge PCLK);
     apb_bfm.write(SDRAM_CTRL, 32'hb000_0000, 4'hf);
 
     //Write SDRAM Mode Register, address pins = settings
     // WriteBurstMode, OpsMode, CL, Sequential, BL=4
     ahb_if[AHB_CTRL_PORT].ahb_bfm.read({1'b0, 2'b00, 3'(SDRAM_CL), 1'b0, 3'($clog2(SDRAM_BURST_SIZE))},
                                        rbuf,
-                                       HDATA_SIZE == 32 ? HSIZE_WORD : HSIZE_DWORD,
+                                       HSIZE_BYTE, //prevent HADDR from being misaligned with HSIZE
                                        HBURST_SINGLE);
     ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
 
 
-    //Set Controller Normal Mode
-    apb_bfm.write(SDRAM_CTRL,
-                  32'h8000_0000                    |
-                  ((SDRAM_ROWS-11)          << 24) |
-                  ($clog2(SDRAM_BURST_SIZE) << 22) |
-                  ((SDRAM_COLS- 8)          << 20) |
-                  ( SDRAM_IAM               << 19) |
-                  ( SDRAM_AP                << 18) |
-                  ( SDRAM_DSIZE             << 16) |
-                  $clog2(WRITEBUFFER_TIMEOUT),      //writebuffer timeout = 2^n
-                  4'hf);
+    //Set Controller Normal Mode and write control values
+    regval = 32'h8000_0000                      |
+             ($clog2(SDRAM_BURST_SIZE/4) << 24) |
+             ((SDRAM_ROWS-11)            << 22) |
+             ((SDRAM_COLS-8)             << 20) |
+             ( SDRAM_IAM                 << 19) |
+             ( SDRAM_AP                  << 18) |
+             ( SDRAM_DSIZE               << 16) |
+             ($clog2(WRITEBUFFER_TIMEOUT)     ) ;      //writebuffer timeout = 2^n
 
+    $display("Writing Control CSR (0x%8h)", regval);
+    $display("  - burst_size=%0d (0x%0h)", $clog2(SDRAM_BURST_SIZE/2) , $clog2(SDRAM_BURST_SIZE/2));
+    $display("  - rows      =%0d (0x%0h)", SDRAM_ROWS , SDRAM_ROWS-11);
+    $display("  - columns   =%0d (0x%0h)", SDRAM_COLS , SDRAM_COLS- 8);
+    $display("  - iam       =%0d (0x%0h)", SDRAM_IAM  , SDRAM_IAM);
+    $display("  - ap        =%0d (0x%0h)", SDRAM_AP   , SDRAM_AP);
+    $display("  - dsize     =%0d (0x%0h)", 16 << SDRAM_DSIZE, SDRAM_DSIZE);
+    $display("  - timeout   =%0d (0x%0h)", WRITEBUFFER_TIMEOUT, $clog2(WRITEBUFFER_TIMEOUT));
+
+    @(posedge PCLK);
+    apb_bfm.write(SDRAM_CTRL, regval, 4'hf);
 
     $display("Initialisation complete");
   endtask : initialise_sdram_ctrl

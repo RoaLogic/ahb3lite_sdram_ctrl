@@ -84,24 +84,20 @@ function automatic [2 + SDRAM_ROWS + SDRAM_COLS -1:0] map_haddr_to_sdram_address
   logic [SDRAM_ROWS -1:0] row;
   logic [SDRAM_COLS -1:0] column;
 
-//$display("haddr=%h", haddr);
-
   //adjust for DSIZE
   adr = haddr >> SDRAM_DSIZE >> 1;
-//$display("adr=%h", adr);
 
   //extract column
   column = adr[0 +: SDRAM_COLS];
-//$display("Column=%h", column);
 
   //extract row
   adr = adr >> SDRAM_COLS;
   row = SDRAM_IAM ? adr[2 +: SDRAM_ADDR_SIZE] : adr[0 +: SDRAM_ADDR_SIZE];
-//$display("row=%h", row);
 
   //extract bank
   bank = SDRAM_IAM ? adr[1:0] : adr[SDRAM_ROWS +: 2];
-//$display("bank=%d", bank);
+
+  $display ("haddr=%0h, ba=%0d, row=%0h, col=%0h", haddr, bank, row, column);
 
   //sdram address
   map_haddr_to_sdram_address = {bank, row, column};
@@ -149,7 +145,7 @@ task automatic poke_sdram (
 
     //map address
     {bank, sdram_address} = map_haddr_to_sdram_address(haddr);
-//    $display("haddr=%h, bank=%d, sdram_address=%h, data=%h", haddr, bank, sdram_address, data);
+//    $display("haddr=%h, bank=%d, sdram_address=%h, data=%h, be=%0h", haddr, bank, sdram_address, data, be);
 
     for (int b=0; b < SDRAM_DQ_SIZE/8; b++)
       if (be[b])

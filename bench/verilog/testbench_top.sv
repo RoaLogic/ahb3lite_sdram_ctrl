@@ -55,7 +55,7 @@ import ahb3lite_pkg::*;
   parameter int  SDRAM_DQ_SIZE        = 32;
   parameter int  SDRAM_ADDR_SIZE      = 11;
   parameter int  SDRAM_AP             = 0;
-  parameter int  SDRAM_BURST_SIZE     = 8;  //1,2,4,8
+  parameter int  SDRAM_BURST_SIZE     = 8;  //4 or 8
 
   parameter int  INIT_DLY_CNT         = 100e-6/(PCLK_PERIOD * 1e-9);  //100us in PCLK cycles
   parameter int  WRITEBUFFER_SIZE     = 8 * HDATA_SIZE;
@@ -86,6 +86,7 @@ import ahb3lite_pkg::*;
   //timing parameters (in ns)
   parameter real REFRESHES      = 4096;
   parameter real REFRESH_PERIOD = 64e-3; // refreshes every 64msecs
+  parameter real tRRD           = 12.0;
   parameter int  tWR            =  6.0;
   parameter real tRAS           = 42.0;
   parameter real tRP            = 18.0;
@@ -147,6 +148,9 @@ import ahb3lite_pkg::*;
   localparam int SDRAM_CTRL = 0;
   localparam int SDRAM_TIME = 4;
   localparam int SDRAM_TREF = 8;
+
+  genvar ahbport;
+
     
   //-------------------------------------------------------
   //
@@ -162,7 +166,7 @@ import ahb3lite_pkg::*;
     $display (" |  |\\  \\ ' '-' '\\ '-'  |    |  '--.' '-' ' '-' ||  |\\ `--. ");
     $display (" `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---' ");
     $display ("- SDRAM Controller Testbench ------------  `---'  ----------");
-    $display ("-------------------------------------------------------------");
+    $display ("------------------------------------------------------------");
     $display ("\n");
   endtask
 
@@ -176,10 +180,10 @@ import ahb3lite_pkg::*;
     $display (" |  |\\  \\ ' '-' '\\ '-'  |    |  '--.' '-' ' '-' ||  |\\ `--. ");
     $display (" `--' '--' `---'  `--`--'    `-----' `---' `-   /`--' `---' ");
     $display ("- SDRAM Controller Testbench ------------  `---'  ----------");
-    $display ("-------------------------------------------------------------");
+    $display ("------------------------------------------------------------");
     $display ("  Done; Tests=%0d, Failed=%0d", total, ugly);
     $display ("  Status = %s", ugly ? "FAILED" : "PASSED");
-    $display ("-------------------------------------------------------------");
+    $display ("------------------------------------------------------------");
   endtask
 
   
@@ -208,7 +212,9 @@ import ahb3lite_pkg::*;
   // Module Body
   //
 
-  //generate clocks
+  /*
+   * Generate clocks
+   */
   always #(PCLK_PERIOD/2.0) PCLK = ~PCLK;
   always #(HCLK_PERIOD/2.0) HCLK = ~HCLK;
 
@@ -216,7 +222,9 @@ import ahb3lite_pkg::*;
   always_comb sdram_rdclk <= #(HCLK_PERIOD/4.0) HCLK;
 
 
-  //Instantiate BFMs
+  /*
+   * Instantiate BFMs
+   */
   apb4_master_bfm #(
     .PADDR_SIZE ( PADDR_SIZE ),
     .PDATA_SIZE ( PDATA_SIZE ))
@@ -236,13 +244,11 @@ import ahb3lite_pkg::*;
 
 
 generate
-  genvar ahbport;
-
   for (ahbport=0; ahbport < AHB_PORTS; ahbport++)
   begin: ahb_if
       ahb3lite_master_bfm #(
-        .HADDR_SIZE        ( HADDR_SIZE         ),
-        .HDATA_SIZE        ( HDATA_SIZE         ))
+        .HADDR_SIZE ( HADDR_SIZE         ),
+        .HDATA_SIZE ( HDATA_SIZE         ))
       ahb_bfm (
         .HRESETn    ( HRESETn            ),
         .HCLK       ( HCLK               ),
@@ -264,7 +270,9 @@ generate
 endgenerate
 
 
-  //Instantiate SDRAM controller (DUT)
+  /*
+   * Instantiate SDRAM controller (DUT)
+   */
   ahb3lite_sdram_ctrl #(
     .INIT_DLY_CNT     ( INIT_DLY_CNT     ),  //in PCLK cycles
     .WRITEBUFFER_SIZE ( WRITEBUFFER_SIZE ),
@@ -325,7 +333,9 @@ endgenerate
     .sdram_dm_o       ( sdram_dm         ));
 
 
-  //PCB traces (transport delay)
+  /*
+   * PCB traces (transport delay)
+   */
   always_comb
   begin
       sdram_clk_pcb   <= #(TRACE_DELAY) sdram_clk;
@@ -343,7 +353,9 @@ endgenerate
   assign sdram_dq = sdram_dq_pcb;
   always_comb sdram_dqi <= #(TRACE_DELAY) sdram_dq;
 
-  //Instantiate SDRAM memory model
+  /*
+   * Instantiate SDRAM memory model
+   */
   IS42VM32200M
   sdram_memory (
     .clk  ( sdram_clk_pcb   ),
@@ -357,9 +369,63 @@ endgenerate
     .dq   ( sdram_dq        ),
     .dqm  ( sdram_dm_pcb    ));
 
- 
-  //Initial settings and tests
+  /*
+   * Instantiate AHB Protocol Checker
+   */
+generate
+  for (ahbport=0; ahbport < AHB_PORTS; ahbport++)
+  begin: ahb_checkers
+      ahb_protocol_checker #(
+        .HADDR_SIZE       ( HADDR_SIZE         ),
+        .HDATA_SIZE       ( HDATA_SIZE         ),
+        .WATCHDOG_TIMEOUT ( 256                ),
+        .CHECK_HPROT      ( 0                  ))
+      ahb_checker (
+        .HRESETn    ( HRESETn            ),
+        .HCLK       ( HCLK               ),
+        .HSEL       ( HSEL     [ahbport] ),
+        .HTRANS     ( HTRANS   [ahbport] ),
+        .HBURST     ( HBURST   [ahbport] ),
+        .HSIZE      ( HSIZE    [ahbport] ),
+        .HWRITE     ( HWRITE   [ahbport] ),
+        .HPROT      ( HPROT    [ahbport] ),
+        .HMASTLOCK  ( HMASTLOCK[ahbport] ),
+        .HADDR      ( HADDR    [ahbport] ),
+        .HWDATA     ( HWDATA   [ahbport] ),
+        .HRDATA     ( HRDATA   [ahbport] ),
+        .HREADY     ( HREADY   [ahbport] ),
+        .HRESP      ( HRESP    [ahbport] ));
+  end
+endgenerate
 
+
+  /*
+   * Instantiate AHB Protocol Checker
+   */
+  apb_checker #(
+    .ADDR_WIDTH       ( PADDR_SIZE ),
+    .DATA_WIDTH       ( PDATA_SIZE ),
+    .WATCHDOG_TIMEOUT ( 256        ),
+    .CHECK_PPROT      ( 1          ))
+  apb_checker (
+    .PRESETn    ( PRESETn ),
+    .PCLK       ( PCLK    ),
+    .PSEL       ( PSEL    ),
+    .PENABLE    ( PENABLE ),
+    .PADDR      ( PADDR   ),
+    .PWRITE     ( PWRITE  ),
+    .PSTRB      ( PSTRB   ),
+    .PPROT      ( PPROT   ),
+    .PWDATA     ( PWDATA  ),
+    .PRDATA     ( PRDATA  ),
+    .PREADY     ( PREADY  ),
+    .PSLVERR    ( PSLVERR ));
+
+  initial apb_checker.set_severity(15, 0); //turn PPROT check off
+
+  /*
+   * Initial settings and tests
+   */
   initial
   begin
       HCLK = 1'b0;
@@ -376,7 +442,7 @@ endgenerate
  
   initial
   begin
-      static int haddr_range = 2**(2 + SDRAM_COLS+SDRAM_ROWS + $clog2(SDRAM_DQ_SIZE/8) - SDRAM_DSIZE - 1);
+      static int haddr_range = 2**(2 + SDRAM_COLS+SDRAM_ROWS + (SDRAM_DSIZE +1));
 
       //wait for PCLK reset
       @(posedge PRESETn);
@@ -390,9 +456,13 @@ endgenerate
 //      tst_write_sequential(haddr_range,1);        //sequential addresses, random data
 //      tst_write_random(haddr_range, haddr_range); //random hburst, hsize, haddr, hwdata
 
-      tst_read_sequential(10, 0);
-//      read_sdram_seq(HSIZE_B32, HBURST_SINGLE, 5);
-//      read_sdram_seq(HSIZE_B16, HBURST_INCR4,  2);
+//tst_read_sequential(5000, 0);
+//      tst_read_sequential(haddr_range, 0);        //sequential addresses, sequential data
+//     tst_read_sequential(haddr_range, 1);        //sequential addresses, random data
+//      tst_read_random(haddr_range, haddr_range);
+
+      tst_readwrite_random(10_000_000, haddr_range);
+
 
       //idle AHB bus
       ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();

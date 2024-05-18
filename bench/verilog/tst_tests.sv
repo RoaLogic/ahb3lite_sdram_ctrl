@@ -60,12 +60,19 @@ task clear_error_counters;
   bad =0;
 endtask
 
+function automatic int min(input int a, b);
+  return a < b ? a : b;
+endfunction : min
+
+
 
 /* Testbuffer
  * Buffer containing data to write/read
  * Compare to contents written to/read from SDRAM memory
  */
-logic [SDRAM_DQ_SIZE-1:0] test_buffer [2**(2+SDRAM_ROWS+SDRAM_COLS)];
+logic [SDRAM_DQ_SIZE  -1:0] test_buffer              [2**(2+SDRAM_ROWS+SDRAM_COLS)];
+logic [SDRAM_DQ_SIZE/8-1:0] test_buffer_byte_written [2**(2+SDRAM_ROWS+SDRAM_COLS)];
+
 
 // Fill test_buffer
 task test_buffer_clear;
@@ -131,9 +138,201 @@ function automatic [HADDR_SIZE-1:0] hsize2bytes (input [HSIZE_SIZE-1:0] hsize);
 endfunction : hsize2bytes
 
 
+function automatic [15:0][127:0][7:0]urandom16384;
+  for (int beats=0; beats < 16 ; beats++)
+  for (int bytes=0; bytes < 128; bytes++)
+    urandom16384[beats][bytes] = $urandom();
+endfunction : urandom16384
+
 
 /* -- SDRAM Access routines
  */
+task automatic set_testbuffer_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst,
+  input [15:0][127:0][7:0] data   //max 16beats * 128 bytes
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+  int                    byteoffset;
+
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+          test_buffer[haddr / (SDRAM_DQ_SIZE/8)][ (haddr % (SDRAM_DQ_SIZE/8)) *8 +: 8] = data[beat][b];
+      end
+
+`ifdef __DEBUG
+    haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize)) & adr_mask)
+                       : start_haddr + (beat << hsize);
+    $display("test_buffer[%0h]:%0h", haddr, test_buffer[haddr / (SDRAM_DQ_SIZE/8)]);
+`endif
+  end
+endtask : set_testbuffer_memory
+
+
+function automatic logic [15:0][127:0][7:0] get_testbuffer_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+  int                    byteoffset;
+
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+          get_testbuffer_memory[beat][b] = test_buffer[haddr / (SDRAM_DQ_SIZE/8)][ (haddr % (SDRAM_DQ_SIZE/8)) *8 +: 8];
+      end
+  end
+  endfunction : get_testbuffer_memory
+
+
+function automatic bit cmp_testbuffer_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst,
+  input [15:0][127:0][7:0] data   //max 16beats * 128 bytes
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+  int                    byteoffset;
+
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+
+          if (test_buffer[haddr / (SDRAM_DQ_SIZE/8)][ (haddr % (SDRAM_DQ_SIZE/8)) *8 +: 8] !== data[beat][b])
+begin
+$display("haddr=%x, test_buffer=%x, sdram=%x", haddr, test_buffer[haddr / (SDRAM_DQ_SIZE/8)][ (haddr % (SDRAM_DQ_SIZE/8)) *8 +: 8], data[beat][b]);
+            return 1'b0; //return false (not equal)
+end
+      end
+  end
+
+  //return true (equal)
+  return 1'b1;
+endfunction : cmp_testbuffer_memory
+
+
+
+task automatic set_sdram_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst,
+  input [15:0][127:0][7:0] data   //max 16beats * 128 bytes
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+  int                    byteoffset;
+
+  //write values to sdram
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+          byteoffset = 1'h1 << (haddr & ((2'h2 << SDRAM_DSIZE) -1'h1));
+          poke_sdram(haddr, data[beat][b] << (8 * (byteoffset -1'h1)), byteoffset);
+      end
+
+`ifdef __DEBUG
+    haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize)) & adr_mask)
+                       : start_haddr + (beat << hsize);
+    $display("sdram[%0h]:%0h", haddr, peek_sdram(haddr));
+`endif
+  end
+endtask : set_sdram_memory
+
+
+function automatic logic [15:0][127:0][7:0] get_sdram_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+
+  //read values from sdram
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+
+          get_sdram_memory[beat][b] = peek_sdram(haddr)[(haddr % (2 << SDRAM_DSIZE)) *8 +: 8];
+//$display("haddr=%x, sdram_memory=%x, sdram_beat=%x", haddr, peek_sdram(haddr), get_sdram_memory[beat][b]);
+      end
+  end
+endfunction : get_sdram_memory
+
+
+function automatic bit cmp_sdram_memory (
+  input [HADDR_SIZE  -1:0] start_haddr,
+  input [HSIZE_SIZE  -1:0] hsize,
+  input [HBURST_SIZE -1:0] hburst,
+  input [15:0][127:0][7:0] data   //max 16beats * 128 bytes
+);
+  int                    beats = ahb_hburst2beats(hburst);
+  int                    bytes = ahb_hsize2bytes(hsize);
+  logic                  wrap_burst = ahb_is_wrap_burst(hburst);
+  logic [HADDR_SIZE-1:0] adr_mask = (beats << hsize) -1'h1;
+  logic [HADDR_SIZE-1:0] haddr;
+  int                    byteoffset;
+
+  //write values to sdram
+  for (int beat=0; beat < beats; beat++)
+  begin
+      for (int b=0; b < bytes; b++)
+      begin
+          haddr = wrap_burst ? (start_haddr & ~adr_mask) | ((start_haddr + (beat << hsize) +b) & adr_mask)
+                             :  start_haddr + (beat << hsize) +b;
+          byteoffset = 1'h1 << (haddr & ((2'h2 << SDRAM_DSIZE) -1'h1));
+
+          if(peek_sdram(haddr)[(haddr % (2 << SDRAM_DSIZE)) *8 +: 8] !== data[beat][b] << (8 * (byteoffset -1'h1)))
+            return 1'b0; //return false (not equal)
+      end
+  end
+
+  //return true (equal)
+  return 1'b1;
+endfunction : cmp_sdram_memory
+
+
+
+
+
+
+
+
 task automatic write_sdram_seq(
   input [HSIZE_SIZE-1:0 ] size,
   input [HBURST_SIZE-1:0] burst,
@@ -301,26 +500,26 @@ static int transaction=0;
 
      begin
          //prepare address phase
-$display ("1: @%0t", $realtime);
+//$display ("1: @%0t", $realtime);
          do
            @(posedge HCLK);
          while (!HREADY[AHB_CTRL_PORT]);
 
          //wait for address phase (1st address is presented here)
-$display ("2: @%0t", $realtime);
+//$display ("2: @%0t", $realtime);
          do
            @(posedge HCLK);
          while (!HREADY[AHB_CTRL_PORT]);
-$display ("3: @%0t", $realtime);
+//$display ("3: @%0t", $realtime);
 
          //Data phase(s)
          for (int i=0; i < beats; i++)
          begin
-$display("4: @%0t", $realtime);
+//$display("4: @%0t", $realtime);
              do
                @(posedge HCLK);
              while (!HREADY[AHB_CTRL_PORT]);
-$display("5: @%0t", $realtime);
+//$display("5: @%0t", $realtime);
 
              for (int b=0; b < hsize2bytes(hsize); b++)
              begin
@@ -378,7 +577,7 @@ endtask : tst_compare
 /* -- Actual tests
  */
 
-// write sequential data
+// write sequential test
 task tst_write_sequential (
   input int runs,
   input bit random
@@ -450,7 +649,7 @@ task tst_write_sequential (
 endtask : tst_write_sequential
 
 
-// write random data
+// random write test
 task tst_write_random (
   input int runs,
   input int haddr_range
@@ -534,6 +733,8 @@ task tst_write_random (
 
       //write values to SDRAM (controller)
       tst_write(AHB_CTRL_PORT, haddr, hsize, hburst);
+
+      //show test progress
       if (run % 500_000 == 0) $display("  run:%0d of %0d (%0d%%)", run, runs, 100*run/runs);
   end
 
@@ -554,7 +755,7 @@ task tst_write_random (
 endtask : tst_write_random
 
 
-// read sequential data
+// read sequential test
 task tst_read_sequential (
   input int runs,
   input bit random
@@ -577,10 +778,11 @@ task tst_read_sequential (
   total_start = total;
   ugly_start  = ugly;
 
-  hsize  = 3'b000;
-  hburst = 3'b011;
-  for (hsize  = 0; hsize  < $clog2(HDATA_SIZE/8); hsize++)
+  hsize  = 3'b010;
+  hburst = 3'b000;
+  for (hsize  = 0; hsize  <= $clog2(HDATA_SIZE/8); hsize++)
   for (hburst = 0; hburst < 8;                    hburst++)
+//  for (hburst = 3'b010; hburst < 8; hburst += 2)
   begin
       if (hburst == HBURST_INCR) hburst++;
 
@@ -591,8 +793,8 @@ task tst_read_sequential (
 
       $display ("tst_read_sequential; hsize=%3b, hburst=%3b", hsize, hburst);
 
-      //perform writes
-      for (int adr=0; adr < runs; adr++)
+      //perform reads
+      for (int adr=0; adr < runs; adr+= (1'h1 << hsize))
       begin
           //perform AHB read
           tst_read(AHB_CTRL_PORT, adr, hsize, hburst);
@@ -621,3 +823,271 @@ task tst_read_sequential (
   $display ("-------------------------------------------------------------");
 
 endtask : tst_read_sequential
+
+
+// random read test
+task tst_read_random (
+  input int runs,
+  input int haddr_range
+);
+  logic [HADDR_SIZE    -1:0] haddr;
+  logic [HSIZE_SIZE    -1:0] hsize;
+  logic [HBURST_SIZE   -1:0] hburst;
+
+  logic [SDRAM_DQ_SIZE -1:0] data;
+  logic                      wrap_burst;
+  int                        wrap_size;
+  logic [HADDR_SIZE    -1:0] adr_mask;
+  int                        offset;
+  int                        beats;
+
+  int run;
+  int ten_percent;
+  int total_start;
+  int ugly_start;
+
+
+  $display ("\n");
+  $display ("-------------------------------------------------------------");
+  $display (" tst_read_random started @%0t", $realtime);
+  $display ("-------------------------------------------------------------");
+  ten_percent = runs /10;
+
+  //clear test_buffer
+  test_buffer_clear();
+
+  //clear SDRAM
+  sdram_clear();
+
+  //clear error counters
+  clear_error_counters();
+  total_start = total;
+  ugly_start  = ugly;
+
+  for (run=0; run < runs; run++)
+  begin
+      haddr  = $urandom_range(0, haddr_range);
+      hsize  = $urandom_range(0, $clog2(HDATA_SIZE/8));
+      hburst = $urandom();
+
+      //haddr must align with hsize
+      haddr &= hsize2adrmask(hsize);
+
+      //Ignore incrementing bursts
+      if (hburst == HBURST_INCR) hburst++;
+
+      //Is this a wrapping burst?
+      wrap_burst = ~hburst[0];
+
+      //How many beats in a transaction
+      beats = hburst2int(hburst);
+
+      //calculate address mask
+      if (wrap_burst) //strictly not required, but speeds up sims
+      begin
+          wrap_size = beats << hsize;
+          adr_mask  = wrap_size -1;
+      end
+
+      //write values to sdram
+      for (int beat=0; beat < beats; beat++)
+      begin
+          data = $urandom();
+          for (int be=0; be < hsize2bytes(hsize); be++)
+          begin
+              offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize) +be) & adr_mask)
+                                  :  haddr + (beat << hsize) +be;
+              poke_sdram(offset, data, 1'h1 << (offset & ((2'h2 << SDRAM_DSIZE) -1'h1)) );
+          end
+
+`ifdef __DEBUG
+          offset = wrap_burst ? (haddr & ~adr_mask) | ((haddr + (beat << hsize)) & adr_mask)
+                              : haddr + (beat << hsize);
+          $display("sdram[%0h]:%0h", offset, peek_sdram(offset));
+`endif
+      end
+
+`ifdef __DEBUG
+      $display ("tst_read_random; hsize=%3b, hburst=%3b, haddr=%h", hsize, hburst, haddr);
+`endif
+
+      //read values from SDRAM (controller)
+      tst_read(AHB_CTRL_PORT, haddr, hsize, hburst);
+
+      //show test progress
+      if (run % ten_percent == 0) $display("  run:%0d of %0d (%0d%%)", run, runs, 100*run/runs);
+  end
+
+  //idle AHB bus
+  ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+
+  //check results
+  tst_compare(0, haddr_range);
+
+
+  $display ("-------------------------------------------------------------");
+  $display (" tst_read_random finished @%0t", $realtime);
+  $display (" Total tests: %0d, failed tests: %0d", total-total_start, ugly-ugly_start);
+  $display ("-------------------------------------------------------------");
+
+endtask : tst_read_random
+
+
+// random read/write test
+task tst_readwrite_random (
+  input int runs,
+  input int haddr_range,
+  input int seed = 1299897866
+);
+  logic [HADDR_SIZE    -1:0] haddr;
+  logic [HSIZE_SIZE    -1:0] hsize;
+  logic [HBURST_SIZE   -1:0] hburst;
+  logic                      hwrite;
+
+  logic [15:0][127:0][7:0]   tmp_data;
+  logic [SDRAM_DQ_SIZE -1:0] data;
+  logic                      wrap_burst;
+  int                        wrap_size;
+  logic [HADDR_SIZE    -1:0] adr_mask;
+  int                        offset;
+  int                        beats;
+
+  static process pt = process::self();
+  int run;
+  int show_percentage;
+  int total_start;
+  int ugly_start;
+
+/*
+  int fd;
+  string line;
+
+  fd = $fopen("/dev/urandom", "r");
+  if (!$fgets(line, fd))
+    $error("Cannot read seed value from /dev/urandom");
+  else
+    seed = int'(line);
+  $fclose(fd);
+*/
+
+  $srandom(seed); //this should be srandom()
+  
+  $display ("\n");
+  $display ("-------------------------------------------------------------");
+  $display (" tst_readwrite_random started @%0t", $realtime);
+  $display (" - randstate=%s", pt.get_randstate());
+  $display (" - seed    =%0d", seed);
+  $display ("-------------------------------------------------------------");
+  show_percentage = min(runs /10, 100000);
+
+  //clear test_buffer
+  $display("Clear testbuffer");
+  test_buffer_clear();
+
+  //clear SDRAM
+  $display("Clear SDRAM");
+  sdram_clear();
+  
+  //fill test_buffer and sdram with (the same!) random data
+  $display("Randomize testbuffer and SDRAM");
+  hsize  = HSIZE_B1024;
+  hburst = HBURST_INCR16;
+  for (haddr=0; haddr < haddr_range; haddr = haddr + (1024 * 16))
+  begin
+      tmp_data = urandom16384();
+
+      set_testbuffer_memory(haddr, hsize, hburst, tmp_data);
+      set_sdram_memory(haddr, hsize, hburst, tmp_data);
+  end
+
+
+  //clear error counters
+  clear_error_counters();
+  total_start = total;
+  ugly_start  = ugly;
+
+  //range from [0,haddr_range>
+  haddr_range = haddr_range -1;
+
+  //run tests
+  for (run=0; run < runs; run++)
+  begin
+      haddr  = $urandom_range(0, haddr_range);
+      hsize  = $urandom_range(0, $clog2(HDATA_SIZE/8));
+      hburst = $urandom();
+      hwrite = $urandom();
+
+      //don't roll over
+      while (haddr + (ahb_hburst2beats(hburst) << hsize) > haddr_range) haddr = $urandom_range(0, haddr_range);
+
+      //haddr must align with hsize
+      haddr &= hsize2adrmask(hsize);
+
+      //Ignore incrementing bursts
+      if (hburst == HBURST_INCR) hburst++;
+
+`ifdef __DEBUG
+      $display ("tst_readwrite_random; hsize=%3b, hburst=%3b, haddr=%h, hwrite=%b", hsize, hburst, haddr, hwrite);
+`endif
+
+      //Is this a wrapping burst?
+      wrap_burst = ~hburst[0];
+
+      //How many beats in a transaction
+      beats = hburst2int(hburst);
+
+      //calculate address mask
+      if (wrap_burst) //strictly not required, but speeds up sims
+      begin
+          wrap_size = beats << hsize;
+          adr_mask  = wrap_size -1;
+      end
+
+      if (hwrite)
+      begin
+          //new random values for write
+          //write values to testbuffer
+          set_testbuffer_memory(haddr, hsize, hburst, urandom16384());
+
+          //write values to SDRAM (controller)
+          tst_write(AHB_CTRL_PORT, haddr, hsize, hburst);
+      end
+      else
+      begin
+          //write new data into SDRAM internal RAM
+//          set_sdram_memory(haddr, hsize, hburst, urandom16384());
+
+          //read values from SDRAM (controller)
+          tst_read(AHB_CTRL_PORT, haddr, hsize, hburst);
+
+          tmp_data = get_sdram_memory(haddr, hsize, hburst);
+          if (!cmp_testbuffer_memory(haddr, hsize, hburst, tmp_data))
+begin
+            $display("ERROR: Not equal haddr=%0x, hsize=%0x, hburst=%0x @%0t", haddr, hsize, hburst, $time);
+ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+#1000 $finish();
+end
+      end
+
+
+      //show test progress
+      if (run % show_percentage == 0) $display("  run:%0d of %0d (%0d%%)", run, runs, 100.0*run/runs);
+  end
+
+  //idle AHB bus
+  ahb_if[AHB_CTRL_PORT].ahb_bfm.idle();
+
+  //wait for the writebuffer to commit contents
+  repeat (100+WRITEBUFFER_TIMEOUT) @(posedge HCLK);
+
+  //check results
+  tst_compare(0, haddr_range);
+
+
+  $display ("-------------------------------------------------------------");
+  $display (" tst_readwrite_random finished @%0t", $realtime);
+  $display (" Total tests: %0d, failed tests: %0d", total-total_start, ugly-ugly_start);
+  $display ("-------------------------------------------------------------");
+
+endtask : tst_readwrite_random
+
