@@ -1,0 +1,9 @@
+verilog/synchronizer.sv
+verilog/sdram_ctrl_pkg.sv
+verilog/sdram_apb_if.sv
+verilog/sdram_address_mapping.sv
+verilog/sdram_ahb_if.sv
+verilog/sdram_cmd_scheduler.sv
+verilog/mesochronous_synchronizer.sv
+verilog/sdram_phy.sv
+verilog/ahb3lite_sdram_ctrl.sv
